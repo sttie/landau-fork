@@ -2,6 +2,11 @@
 
 parameter[6] initial
 
+real[3] f (real[1] m)
+{
+  f[0: 3] = 1.0
+}
+
 real[6 + 36 + 6] xdot (
   real[6 + 36 + 6] x,
   real GM)

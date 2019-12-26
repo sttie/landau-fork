@@ -1,6 +1,6 @@
-#lang racket/base
+#lang racket
 (require 
- ;(for-syntax (for-syntax racket/base racket/syntax syntax/parse))
+ (for-syntax (for-syntax racket/base racket/syntax syntax/parse))
  (for-syntax racket/base
              racket/contract
              racket/extflonum
@@ -16,11 +16,9 @@
              racket/pretty
              racket/vector
              syntax/parse
-             "constant-propagation.rkt" 
              "environment.rkt"
              "target-config.rkt"
              "metalang.rkt")
-         "constant-propagation.rkt" 
          "environment.rkt"
          "combinators.rkt"
          "metalang.rkt"
@@ -30,34 +28,92 @@
          racket/extflonum
          racket/fixnum)
 
+;(provide check-duplicate-variable-name check-duplicate-argument-name)
 (provide (all-defined-out))
-(provide (for-syntax (all-from-out "constant-propagation.rkt")))
 (provide (for-syntax (except-out (all-defined-out) binary-op-cast)))
 
-(define-syntax-rule (define/contract-for-syntax definition type body ...)
-  (begin-for-syntax (define/contract definition type (begin body ...))))
-
-(define-for-syntax TIME-TABLE (make-hash (list (cons 'head-time 0.0)
-                                               (cons 'tail-time 0.0)
-                                               (cons 'local-expand-2 0.0)
-                                               (cons 'to-landau-type 0.0)
-                                               (cons 'search-name 0.0)
-                                               (cons 'local-expand 0.0))))
 (define-for-syntax (fmap f maybe-false)
   (if maybe-false
       (f maybe-false)
       #f))
 
-(define-for-syntax (zip proc l1 l2)
-  (for/list ((lr (in-list l1)) (ll (in-list l2)))
-    (proc lr ll)))
+(define-for-syntax rl*
+  (if (target-extfloat? TARGET)
+    extfl*
+    fl*))
 
+(define-for-syntax rl/
+  (if (target-extfloat? TARGET)
+    extfl/
+    fl/))
+
+(define-for-syntax rl+
+  (if (target-extfloat? TARGET)
+    extfl+
+    fl+))
+
+(define-for-syntax rl-
+  (if (target-extfloat? TARGET)
+    extfl-
+    fl-))
+
+(define-for-syntax (rl-neg n)
+  (if (target-extfloat? TARGET)
+    (extfl- 0.0t0 n)
+    (fl- n)))
+
+(define-for-syntax rl-sin
+  (if (target-extfloat? TARGET)
+    extflsin
+    flsin))
+
+(define-for-syntax rl-cos
+  (if (target-extfloat? TARGET)
+    extflcos
+    flcos))
+
+(define-for-syntax ->rl
+  (if (target-extfloat? TARGET)
+    ->extfl
+    ->fl))
+
+(define-for-syntax (rl-sqr x)
+  (if (target-extfloat? TARGET)
+    (lambda (x) (extfl* x x))
+    (lambda (x) (fl* x x))))
+
+(define-for-syntax rl-sqrt
+  (if (target-extfloat? TARGET)
+    extflsqrt
+    flsqrt))
+
+(define-for-syntax rl-expt
+  (if (target-extfloat? TARGET)
+    extflexpt
+    flexpt))
+
+(define-for-syntax rl-vector-ref
+  (if (target-extfloat? TARGET)
+    extflvector-ref
+    flvector-ref))
+
+(define-for-syntax (list->rl-vector value-list)
+  (if (target-extfloat? TARGET)
+    (for/extflvector ((x (in-list value-list)))
+                     (begin
+                      (atom-number x)))
+    (for/flvector ((x (in-list value-list)))
+                  (begin
+                   (atom-number x)))))
+
+(define-for-syntax (normilize-rl rl)
+  (if (and (equal? 'racket (target-lang TARGET)) 
+           (target-extfloat? TARGET))
+    #'(format "~a" rl)
+    #'rl))
 
 (define-for-syntax (with-syntax-property property-name property-value stx)
   (syntax-property stx property-name property-value #t))
-
-(define-for-syntax (read-syntax-property property-name stx)
-  (syntax-property stx property-name))
 
 (define-for-syntax (is-type stx type)
   (syntax-property stx 'landau-type type #t))
@@ -83,6 +139,11 @@
 (define-for-syntax (get-array-type type)
   (car type))
 
+(define-for-syntax (vector->carray vec)
+  (format "{ ~a }"
+          (string-join
+           (vector->list (vector-map! number->string vec)) ", ")))
+
 (define-for-syntax (fxvector->vector fxvec)
   (for/vector
       ((i (in-range (fxvector-length fxvec))))
@@ -101,21 +162,21 @@
       #f))
 
 (define-for-syntax (get-slice-range type)
-  (match type
-    ((list base (list rng)) rng)
-    (base #f)))
+  (if (is-slice? type)
+      (cadr type)
+      #f))
 
 (define-for-syntax (get-slice-type type)
-  (match type
-    ((list base _) base)
-    (base #f)))
+  (if (is-slice? type)
+      (car type)
+      #f))
 
 (define-for-syntax (is-slice-of-type basic-type type)
   (and (is-slice? type) (equal? (get-slice-type type) basic-type)))
 
 (define-for-syntax (landau-type base-type (slice-range #f))
   (if slice-range
-      (list base-type (list slice-range))
+      (list base-type slice-range)
       base-type))
 
 (define-for-syntax (check-result stx err-str func-res)
@@ -124,7 +185,6 @@
       (raise-syntax-error #f err-str stx)))
 
 (define-for-syntax (binary-op-cast op1 op2 stx) (binary-op-cast-helper op1 op2 stx))
-
 
 (define-for-syntax (binary-op-cast-helper op1 op2 stx)
   (let ((type1 (syntax-property op1 'landau-type))
@@ -223,7 +283,6 @@
        (begin
         (raise-syntax-error #f (format "cannot cast ~v and ~v" type1 type2) stx))))))
 
-
 (define-for-syntax (xor e1 e2)
   (let ((b1 (not (not e1)))
         (b2 (not (not e2))))
@@ -232,115 +291,385 @@
       [else #t])))
       
 
-(define/contract-for-syntax
-  (make-need-derivatives-key arr-name-str)
-  (-> string? string?)
-  arr-name-str)
+(begin-for-syntax
+ (define/contract 
+   (make-need-derivatives-key arr-name-str)
+   (-> string? string?)
+   arr-name-str))
 
-(define/contract-for-syntax
-  (get-der-variable-dx-range-helper df-name dx-name need-derivatives-table stx)
-  (-> var-symbol/c (or/c string? false/c) need-derivatives-table/c (syntax/c any/c)
-      (or/c integer? false/c))
-  (cond
-    ((not dx-name) #f)
-    (else
-      (fmap mapping-sizes-.mapping-period 
-            (ndt-get-mapping-sizes need-derivatives-table df-name dx-name)))))
+(begin-for-syntax
+  (define/contract
+    (get-der-variable-dx-range-helper df-name dx-name need-derivatives-table stx)
+    (-> var-symbol/c (or/c string? false/c) need-derivatives-table/c (syntax/c any/c)
+        (or/c integer? false/c))
+    (cond
+        ((not dx-name) #f)
+        (else
+         (fmap mapping-sizes-.mapping-period 
+               (ndt-get-mapping-sizes need-derivatives-table df-name dx-name))))))
+
+; (define-for-syntax (bin-op stx op type x y lang)
+;   (if (equal? lang 'racket)
+;       (match type
+;         ('real 
+;          (quasisyntax/loc stx (#,(if (equal? op "+")) )))
+;         #'(format "(~a ~a ~a)" x op y)))
+
+(define-for-syntax (atom-number stx)
+  (let ((v (syntax->datum stx)))
+    (match v
+      ((? number?) v)
+      ((? extflonum?) v)
+      ((list 'quote (? number?)) (cadr v))
+      ((list 'quote (? extflonum?)) (cadr v))
+      (else #f))))
+
+;; NOTE: Traverse the keys of all needed variables names and allocate mappings vectors if variable need derivatives
+;;       Mappings and dx-idx-mappings are allocated for function return value and function arguments
+;;       if thee belong to need-derivatives-set-GLOBAL set         
+;;       (e.g. df-table is empty) df-table :: Hash (String-key, (idx-type (Either (Set Int) Bool))
+;; WARNING: Mutation of need-derivatives-set-GLOBAL need-only-value-set-GLOBAL
+(begin-for-syntax
+  (define/contract (make-mappings-decl-list-helper!
+                    dx-name-str
+                    grouped-keys-table
+                    real-vars-table
+                    der-table
+                    need-only-value-set
+                    need-derivatives-table
+                    current-variables
+                    lang
+                    stx)
+    (-> string?
+        grouped-keys-table/c
+        real-vars-table/c
+        der-table/c
+        need-only-value-set/c
+        need-derivatives-table/c
+        current-variables/c
+        lang/c
+        (syntax/c any/c)
+      
+        (listof any/c))
+    (begin
+      ;  (println "grouped-keys-table")
+      ;  (pretty-print grouped-keys-table)
+
+      ;  (println "real-vars-table")
+      ;  (pretty-print real-vars-table)
+
+      ;  (println "need-derivatives-table")
+      ;  (pretty-print need-derivatives-table)
+      (with-syntax
+          ((decl-list
+            (for/list ((var-name-key (in-list (hash-keys grouped-keys-table))))
+              (let* (
+                     (var-size (rvt-get-var-size real-vars-table var-name-key))
+                     (n-mappings (if var-size var-size 1))
+                     (is-basic-variable (not (rvt-var-is-array real-vars-table var-name-key))))
+                (let-values
+                    (((mapping-var-symbol df-mappings-vec dx-idx-mappings-var-symbol dx-idx-mappings-vec)
+                      (cond
+                        (is-basic-variable
+                         ;; NOTE: non-array variable
+                         ;; NOTE: ditry trick with passing ref to ref-to-key. der-table include only (list/c stirng? integer?) keys
+                         (let ((df-table (dtbl-get-df-table 
+                                          der-table
+                                          (ref-to-key (list 'array-ref var-name-key 0)))))
+                           (cond
+                             ((hash-empty? df-table)
+                              (set-add! need-only-value-set var-name-key)
+                              (values #f #f #f #f))
+                          
+                             (else
+                              (cond
+                                ((hash-has-key? df-table dx-name-str)
+                                 (let* ((der-bundle (hash-ref df-table dx-name-str))
+                                        (dx-indexes-sorted
+                                         (sort (if (equal? 'dx-idxs (car der-bundle))
+                                                   (set->list (cadr der-bundle))
+                                                   (error "bug: car is not 'dx-idxs")) <))
+                                        (mapped-dx-size (length dx-indexes-sorted))
+                                        (mapping (for/fxvector ((i (in-list dx-indexes-sorted))) i))
+                                        (inv-mapping-period-value (fx+ (apply fxmax dx-indexes-sorted) 1))
+                                        (dx-idx-mapping (make-fxvector inv-mapping-period-value -1)))
+                                   
+                                   ; (unless dx-name-str (error "foo"))
+                                   ;; TODO: refactor
+                                   ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
+                                   (if (ndt-member? need-derivatives-table var-name-key)
+                                     (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
+                                       (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
+                                     (hash-set!
+                                      need-derivatives-table
+                                      var-name-key
+                                      (make-hash (list (cons dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value))))))
+                                   
+                                   (for ((dx-idx (in-list dx-indexes-sorted))
+                                         (mapped-dx-index (in-naturals)))
+                                     (fxvector-set! dx-idx-mapping dx-idx mapped-dx-index))
+                                   
+                                   (values
+                                    
+                                    (add-variable!
+                                     current-variables
+                                     (datum->syntax #f (make-var-mappings-name var-name-key dx-name-str))
+                                     'mappings)
+                                    
+                                    mapping
+                                    
+                                    (add-variable!
+                                     current-variables
+                                     (datum->syntax #f (make-dx-idxs-mappings-name var-name-key dx-name-str))
+                                     'dx-mappings)
+                                    
+                                    dx-idx-mapping)))
+                                
+                                (else (values #f #f #f #f)))))))
+                            
+                        ;; NOTE: array variable
+                        (else
+                         (let* ((df-tables-are-empty
+                                 (for/and ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                                   (let ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                                     (hash-empty? df-table)))))
+                                 
+                           (if df-tables-are-empty
+                               (begin
+                                 (set-add! need-only-value-set var-name-key)
+                                 (values #f #f #f #f))
+                               ;; FIXME: at some indexses (hash-ref df-table dx-name-str) can hae no value
+                               (let ((df-tables-has-no-dx-key
+                                      (for/and ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                                        (let ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                                          (not (hash-has-key? df-table dx-name-str))))))
+                                      
+                                  
+                                 (if df-tables-has-no-dx-key
+                                     (values #f #f #f #f)
+                                     (let* ((needed-dx-idx-count
+                                             (for/list ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                                               (let
+                                                   ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                                                 (cond
+                                                   ((hash-empty? df-table) 0)
+                                                   ((hash-has-key? df-table dx-name-str)
+                                                    (let* ((der-bundle (hash-ref df-table dx-name-str))
+                                                           (dx-indexes
+                                                            (if (equal? 'dx-idxs (car der-bundle))
+                                                                (set->list (cadr der-bundle))
+                                                                (error "bug: car is not 'dx-idxs"))))
+                                                      (length dx-indexes)))
+                                                   (else 0)))))
+                                            ;(i (writeln (format "needed-dfdx-idxs-count: ~a" needed-dx-idx-count)))
+                                            (mapped-dx-size
+                                             (apply fxmax needed-dx-idx-count))
+                                            ;; NOTE: df-mappings is a vector size of df-array * dx-period. Left-aligned, padded right with -1
+                                            ;; df-mappings :: Vector (U (List dx-idx) Bool)
+                                            (df-mappings (make-fxvector (fx* n-mappings mapped-dx-size) -1))
+
+                                            (inv-mapping-period-value
+                                             (fx+ 1 (apply fxmax
+                                                           (for/list ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                                                             (let* ((df-table
+                                                                     (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                                                               (if (hash-has-key? df-table dx-name-str)
+                                                                   (let* ((der-bundle (hash-ref df-table dx-name-str)))
+
+                                                                     (apply fxmax
+                                                                            (if (equal? 'dx-idxs (car der-bundle))
+                                                                                (set->list (cadr der-bundle))
+                                                                                (error "bug: car is not 'dx-idxs"))))
+                                                                   0))))))
+
+                                            (dx-idx-mappings (make-fxvector (fx* n-mappings inv-mapping-period-value) -1)))
+                                       ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
 
 
+                                       
+                                       (if (hash-has-key? need-derivatives-table var-name-key)
+                                           (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
 
+                                             (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
+                                           (hash-set!
+                                            need-derivatives-table
+                                            var-name-key
+                                            (make-hash (list (cons dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value))))))
 
+                                       (for ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                                         (let* ((df-table
+                                                 (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+
+                                           (when (hash-has-key? df-table dx-name-str)
+                                             (let* ((der-bundle (hash-ref df-table dx-name-str))
+                                                    (dx-indexes-sorted
+                                                     ;; FIXME: try to cast to vector and sort it
+                                                     (sort (if (equal? 'dx-idxs (car der-bundle))
+                                                               (set->list (cadr der-bundle))
+                                                               (error "bug: car is not 'dx-idxs")) <)))
+                                               ;(dx-idx-mapping (make-fxvector (fx+ (apply fxmax dx-indexes-sorted) 1) -1))
+                                               (for ((dx-idx (in-list dx-indexes-sorted))
+                                                     (mapped-dx-index (in-naturals)))
+                                                 (fxvector-set! dx-idx-mappings
+                                                                (fx+ (fx* var-array-idx inv-mapping-period-value) dx-idx) mapped-dx-index))
+                                               (for ((dx-idx (in-list dx-indexes-sorted))
+                                                     (i (in-naturals)))
+                                                 (fxvector-set! df-mappings (fx+ (fx* mapped-dx-size var-array-idx) i) dx-idx))))))
+
+                                       (values
+                                        (add-variable!
+                                         current-variables
+                                         (datum->syntax #f 
+                                                         (make-var-mappings-name var-name-key dx-name-str))
+                                         'mappings)
+                                        df-mappings
+                                        (add-variable!
+                                         current-variables
+                                         (datum->syntax #f 
+                                                         (make-dx-idxs-mappings-name var-name-key dx-name-str))
+                                         'dx-mappings)
+                                        dx-idx-mappings))))))))))
+
+                                    
+                  (match lang
+                         ;; NOTE: Racket lang
+                      ('racket
+                       (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
+                          (begin
+                            (with-syntax* 
+                                ((dx-idx-mappings-vec-syntax dx-idx-mappings-vec)
+                                 (mapping-var-symbol (datum->syntax stx mapping-var-symbol))
+                                 (dx-idx-mappings-var-symbol (datum->syntax stx dx-idx-mappings-var-symbol))
+                                 (dx-name-str dx-name-str)
+                                 (debug-msg
+                                  (if debug
+                                      (quasisyntax/loc stx
+                                        (displayln
+                                         (string-append
+                                          (format "~a ' ~a mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'df-mappings-vec)
+                                          (format "~a ' ~a inv-mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'dx-idx-mappings-vec))))
+                                   
+                                      #'(void))))
+                              (with-syntax
+                                  ((df-mappings-vec (fxvec->vec df-mappings-vec))
+                                   (dx-idx-mappings-vec (fxvec->vec dx-idx-mappings-vec)))
+                                (quasisyntax/loc stx
+                                  (begin (define mapping-var-symbol (vec->fxvec df-mappings-vec))
+                                         (define dx-idx-mappings-var-symbol (vec->fxvec dx-idx-mappings-vec))
+                                         debug-msg)))))
+                                   
+                          #'(void)))
+                  
+                      ;; NOTE: ANSI-C lang
+                      ('ansi-c
+                       (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
+                         (with-syntax ((df-mappings-vec (vector->carray (fxvector->vector df-mappings-vec)))
+                                       (df-mappings-vec-size (fxvector-length df-mappings-vec))
+                                       (dx-idx-mappings-vec (vector->carray (fxvector->vector dx-idx-mappings-vec)))
+                                       (dx-idx-mappings-vec-size (fxvector-length dx-idx-mappings-vec))
+                                       (mapping-var-symbol (symbol->string mapping-var-symbol))
+                                       (dx-idx-mappings-var-symbol (symbol->string dx-idx-mappings-var-symbol)))
+                           (quasisyntax/loc stx
+                                            (list
+                                             (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "static")
+                               ;(log-debug (format "~a mappings: ~a" #,var-name-key #,#'df-mappings-vec))
+                                             (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "static"))))
+                          ;(log-debug (format "~a inv-mappings: ~a" #,var-name-key #,#'dx-idx-mappings-vec))
+                         
+                         #'""))))))))
+            
+        (syntax-e #'decl-list)))))
 
 ;; NOTE: iterate through args, if arg need derivatives then
 ;; - add -der variable
 ;; - change type 'real -> 'dual-l
 ;; - allocate vector
 ;; - dx is always dual-l
-(define/contract-for-syntax
-  (make-der-decl-list-helper!
-    args
-    dx-names-hash-set 
-    need-derivatives-table
-    current-variables
-    current-arguments
-    lang
-    stx)
-  (-> current-arguments/c
-      dx-names-hash-set/c
-      need-derivatives-table/c
-      current-variables/c
-      current-arguments/c
-      lang/c
-      (syntax/c any/c)
+(begin-for-syntax
+  (define/contract (make-der-decl-list-helper!
+                    args
+                    dx-names-hash-set 
+                    need-derivatives-table
+                    current-variables
+                    current-arguments
+                    lang
+                    stx)
+    (-> current-arguments/c
+        dx-names-hash-set/c
+        need-derivatives-table/c
+        current-variables/c
+        current-arguments/c
+        lang/c
+        (syntax/c any/c)
+      
+        (listof any/c))
 
-      (listof any/c))
-
-  (let* ((dx-names dx-names-hash-set)
-         (fake-src-pos 0))
-    (for/list ((arg-kv (in-list (hash->list args))))
-      (let* ((arg-name (car arg-kv))
-             (arg-vs (var-symbol (symbol->string arg-name) fake-src-pos))
-             (arg-struct (cdr arg-kv))
-             (arg-basic-type (car (argument-type arg-struct))))
-        (when (equal? arg-basic-type 'real)
-          (let*
-            ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments)))
-            (when (hash-has-key? dx-names (symbol->string arg-name))
-              (change-arg-type!
-                current-arguments
-                arg-name
-                (make-dual-type df-type 'dual-l)))
-            (unless (var-symbol/c arg-vs)
-              (error "436"))
-            (when (ndt-member? need-derivatives-table arg-vs)
-              (with-syntax
-                ((der-vec-decl-list-forall-dx
-                   (let ((dx-keys (ndt-get-dx-names need-derivatives-table arg-vs)))
-                     (for/list ((dx-name-str (in-list dx-keys)))
-                       (let* ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments))
-
-                              (arg-name-str (symbol->string arg-name))
-                              (dx-mapped-size (check-result
-                                                stx 
-                                                (format 
-                                                  "bug: get-der-variable-dx-range-helper returned #f for a key: ~a ~a" 
-                                                  arg-vs
-                                                  dx-name-str) 
-                                                (get-der-variable-dx-range-helper 
-                                                  arg-vs
-                                                  dx-name-str 
-                                                  need-derivatives-table 
-                                                  stx)))
-                              (df-size (car (if (empty? (cadr df-type)) (list 1) (cadr df-type))))
-                              (dx-mapped-type (make-landau-type 'real dx-mapped-size))
-                              (dual-r-var (add-variable!
-                                            current-variables
-                                            (datum->syntax #f (make-var-der-name arg-vs dx-name-str))
-                                            ;; NOTE: it is a period number (dx range), not the vector capasity
-                                            (make-dual-type dx-mapped-type 'dual-r))))
-                         ;(log-debug (format "debug: add derivative. key: ~a" (make-var-der-name arg-name dx-name-str)))
-                         ;; NOTE: After dual-r-var been added to variables
-                         ;;       arg type is changed from 'real to 'dual-l
-                         (change-arg-type!
-                           current-arguments
-                           arg-name
-                           (make-dual-type df-type 'dual-l))
-                         (match lang 
-                           ('racket
-                            (with-syntax ((der-vec (datum->syntax stx dual-r-var)))
-                              (quasisyntax/loc stx
-                                               (define der-vec #,(instantiate-dual-var df-type dx-mapped-size stx)))))
-                           ('ansi-c
-                            (with-syntax* ((der-vec (symbol->string dual-r-var))
-                                           (df-size (local-expand (datum->syntax stx df-size) 'expression '()))
-                                           (arr-size (fx* (atom-number #'df-size) dx-mapped-size)))
-                                          (quasisyntax/loc stx  
-                                                           (c-define-array c-real-type
-                                                                           der-vec arr-size c-zero-filled-array))))))))))
-                (if (equal? lang 'racket)
-                  (cons 'begin (syntax-e #'der-vec-decl-list-forall-dx))
-                  (with-syntax ((der-vec-decl-list-forall-dx_ (cons 'list (syntax-e #'der-vec-decl-list-forall-dx))))
-                    #'(flatten der-vec-decl-list-forall-dx_)))))))))))
+    (let* ((dx-names dx-names-hash-set)
+           (fake-src-pos 0))
+      (for/list ((arg-kv (in-list (hash->list args))))
+        (let* ((arg-name (car arg-kv))
+               (arg-vs (var-symbol (symbol->string arg-name) fake-src-pos))
+               (arg-struct (cdr arg-kv))
+               (arg-basic-type (car (argument-type arg-struct))))
+          (when (equal? arg-basic-type 'real)
+            (let*
+                ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments)))
+              (when (hash-has-key? dx-names (symbol->string arg-name))
+                (change-arg-type!
+                 current-arguments
+                 arg-name
+                 (make-dual-type df-type 'dual-l)))
+              (when (ndt-member? need-derivatives-table arg-vs)
+                (with-syntax
+                    ((der-vec-decl-list-forall-dx
+                      (let ((dx-keys (ndt-get-dx-names need-derivatives-table arg-vs)))
+                        (for/list ((dx-name-str (in-list dx-keys)))
+                          (let* ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments))
+                             
+                                 (arg-name-str (symbol->string arg-name))
+                                 (dx-mapped-size (check-result stx 
+                                                               (format 
+                                                                "bug: get-der-variable-dx-range-helper returned #f for a key: ~a ~a" 
+                                                                (datum->syntax #f arg-name)
+                                                                dx-name-str) 
+                                                               (get-der-variable-dx-range-helper 
+                                                                (datum->syntax #f arg-name) 
+                                                                dx-name-str 
+                                                                need-derivatives-table 
+                                                                stx)))
+                                 (df-size (car (if (empty? (cadr df-type)) (list 1) (cadr df-type))))
+                                 ;; FIXME: Could be malfored; not shure
+                                 (dx-mapped-type (list 'real (list dx-mapped-size)))
+                                 (dual-r-var (add-variable!
+                                              current-variables
+                                              (datum->syntax #f (make-var-der-name arg-vs dx-name-str))
+                                              ;; NOTE: it is a period number (dx range), not the vector capasity
+                                              (make-dual-type dx-mapped-type 'dual-r))))
+                            ;(log-debug (format "debug: add derivative. key: ~a" (make-var-der-name arg-name dx-name-str)))
+                            ;; NOTE: After dual-r-var been added to variables
+                            ;;       arg type is changed from 'real to 'dual-l
+                            (change-arg-type!
+                             current-arguments
+                             arg-name
+                             (make-dual-type df-type 'dual-l))
+                            (match lang ;;FIXME: refactor
+                                ('racket
+                                 (with-syntax ((der-vec (datum->syntax stx dual-r-var)))
+                                  (quasisyntax/loc stx
+                                                   (define der-vec #,(instantiate-dual-var df-type dx-mapped-size stx)))))
+                                ('ansi-c
+                                 (with-syntax* ((der-vec (symbol->string dual-r-var))
+                                               (df-size (local-expand (datum->syntax stx df-size) 'expression '()))
+                                               (arr-size (fx* (atom-number #'df-size) dx-mapped-size)))
+                                  (quasisyntax/loc stx  
+                                                   (c-define-array #,(if (target-extfloat? TARGET)
+                                                                        "long double" ;; REFACTOR
+                                                                        "double") 
+                                                                    der-vec arr-size "{ 0.0 }"))))))))))
+                  (if (equal? lang 'racket)
+                      (cons 'begin (syntax-e #'der-vec-decl-list-forall-dx))
+                      (with-syntax ((der-vec-decl-list-forall-dx_ (cons 'list (syntax-e #'der-vec-decl-list-forall-dx))))
+                        #'(flatten der-vec-decl-list-forall-dx_))))))))))))
 
 
 (define-for-syntax (get-arg-type-helper d-name current-arguments)
@@ -358,6 +687,7 @@
 
 ;; NOTE: it is used close to the declaration where types are just parsed,
 ;; except the func-value case, where it's type changed from real to dual-l and then der-vector is allocated
+;;FIXME: refactor
 (define-for-syntax (instantiate-dual-var df-type dx-mapped-size stx)
   (let ((msg "bug: instantiate-dual-var: df-type can be only 'real array"))
     (cond
@@ -367,13 +697,14 @@
           (if (or (equal? type 'real) (equal? type 'dual-l))
               (with-syntax ((expanded-df-size (cadr (syntax->datum (local-expand (datum->syntax stx df-size) 'expression '())))))
                 (quasisyntax/loc stx 
-                  (#,make-rl-vector (fx* #,#'expanded-df-size #,dx-mapped-size))))
+                  ;; REFACTOR
+                  (#,(if (target-extfloat? TARGET) make-extflvector make-flvector) (fx* #,#'expanded-df-size #,dx-mapped-size))))
               (error msg)))
          ((list (list type (list)) dx-mapped-size)
           (if (or (equal? type 'real) (equal? type 'dual-l))
               (quasisyntax/loc stx
-                (begin
-                  (#,make-rl-vector #,dx-mapped-size)))
+                (begin ;; REFACTOR
+                  (#,(if (target-extfloat? TARGET) make-extflvector make-flvector) #,dx-mapped-size)))
               (error msg)))
          (else "bug: instantiate-dual-var: match type failed")))
          
@@ -407,42 +738,42 @@
     [else (error (format "unsupported type: ~v" parsed-type))]))
     
 
-(define/contract-for-syntax
-  (check-duplicate-variable-name-helper name stx-name current-variables current-arguments function-name)
-  (-> symbol? (syntax/c any/c) current-variables/c current-arguments/c symbol? void?)
-  #| (when (search-variable name current-variables) |#
-       #|   (pretty-print current-variables) |#
-       #|   (raise-syntax-error #f "duplicate variable declaration" stx-name)) |#
-  (when (hash-has-key? constants name)
-    (raise-syntax-error #f "variable name shadows constant" stx-name))
-  (when (hash-has-key? parameters name)
-    (raise-syntax-error #f "variable name shadows parameter" stx-name))
-  (when (hash-has-key? current-arguments name)
-    (raise-syntax-error #f "variable name shadows argument" stx-name))
-  (when (equal? function-name name)
-    (raise-syntax-error #f "variable name shadows function" stx-name)))
+(begin-for-syntax
+ (define/contract
+   (check-duplicate-variable-name-helper name stx-name current-variables current-arguments function-name)
+   (-> symbol? (syntax/c any/c) current-variables/c current-arguments/c symbol? void?)
+   (when (search-variable name current-variables)
+     (raise-syntax-error #f "duplicate variable declaration" stx-name))
+   (when (hash-has-key? constants name)
+     (raise-syntax-error #f "variable name shadows constant" stx-name))
+   (when (hash-has-key? parameters name)
+     (raise-syntax-error #f "variable name shadows parameter" stx-name))
+   (when (hash-has-key? current-arguments name)
+     (raise-syntax-error #f "variable name shadows argument" stx-name))
+   (when (equal? function-name name)
+     (raise-syntax-error #f "variable name shadows function" stx-name))))
 
-(define/contract-for-syntax
-  (check-duplicate-argument-name args funcname name stx-name)
-  (-> current-arguments/c symbol? symbol? (syntax/c any/c) void?)
-  (when (equal? funcname name)
-    (raise-syntax-error #f "argument name shadows function" stx-name))
-  (when (hash-has-key? parameters name)
-    (raise-syntax-error #f "variable name shadows parameter" stx-name))
-  (when (hash-has-key? args name)
-    (raise-syntax-error #f "duplicate argument" stx-name))
-  (when (hash-has-key? constants name)
-    (raise-syntax-error #f "argument name shadows constant" stx-name)))
+(begin-for-syntax
+ (define/contract
+   (check-duplicate-argument-name args funcname name stx-name)
+   (-> current-arguments/c symbol? symbol? (syntax/c any/c) void?)
+   (when (equal? funcname name)
+     (raise-syntax-error #f "argument name shadows function" stx-name))
+   (when (hash-has-key? parameters name)
+     (raise-syntax-error #f "variable name shadows parameter" stx-name))
+   (when (hash-has-key? args name)
+     (raise-syntax-error #f "duplicate argument" stx-name))
+   (when (hash-has-key? constants name)
+     (raise-syntax-error #f "argument name shadows constant" stx-name))))
 
 ;; NOTE: extract syntax after syntax-parameterize
 (define-for-syntax (extract stx)
-  (syntax-parse stx
-    (((~literal let-values) _ 
-                            ((~literal #%expression) 
-                             ((~literal let-values) _ expr))) #'expr)
-    (((~literal let-values) _ 
-                            ((~literal #%expression) 
-                             ((~literal let-values) _ _ _ expr))) #'expr)))
+  (caddr
+   (syntax->list
+    (cadr
+     (syntax->list
+      (caddr
+       (syntax->list stx)))))))
 
 (define-for-syntax (fxvec->vec fxvec)
   (for/vector ((i (fxvector-length fxvec)))
@@ -462,7 +793,8 @@
 
 (define-for-syntax debug #f)
 
-(define/contract-for-syntax
+(begin-for-syntax
+ (define/contract 
   (get-symbol-helper stx name dx-name-str make-name current-variables err-msg [throw-error? #t])
   (->* ((syntax/c any/c) 
         var-symbol/c 
@@ -473,45 +805,46 @@
        (boolean?)
        (or/c (syntax/c symbol?) #f))
   (let ([var
-          (search-variable
-            (make-name name dx-name-str)
-            current-variables)])
+         (search-variable
+          (make-name name dx-name-str)
+          current-variables)])
     (cond
       [var (datum->syntax stx (variable-symbol var))]
       [else (if throw-error?
-              (raise-syntax-error #f (format "bug: ~a array not found. key: ~a"
-                                             err-msg
-                                             (make-name name dx-name-str)) stx)
-              #f)])))
+                (raise-syntax-error #f (format "bug: ~a array not found. key: ~a"
+                                               err-msg
+                                               (make-name name dx-name-str)) stx)
+                #f)]))))
 
 
 (define (is-basic-ref? ref) (equal? (car ref) 'basic-ref))
 
 (define (is-array-ref? ref) (equal? (car ref) 'array-ref))
 
-(define/contract-for-syntax
-  (_key<? vs-1 vs-2)
-  (-> var-symbol/c var-symbol/c 
-      boolean?)
-  (string<? (var-symbol->string vs-1)
-            (var-symbol->string vs-2)))
+(begin-for-syntax
+ (define/contract 
+   (_key<? vs-1 vs-2)
+   (-> var-symbol/c var-symbol/c 
+       boolean?)
+   (string<? (var-symbol->string vs-1)
+             (var-symbol->string vs-2)))
 
-(define/contract-for-syntax
-  (group-by-names keys)
-  (-> (listof df-name/c) 
-      grouped-keys-table/c)
+ (define/contract 
+ (group-by-names keys)
+ (-> (listof df-name/c) 
+     grouped-keys-table/c)
   (let* ((sorted (sort keys _key<? #:key car))
          (ht (make-hash)))
     (for ((p (in-list sorted)))
       (let ((name (car p))
             (idx (if (equal? (length p) 2)
-                   (cadr p)
-                   #f)))
+                     (cadr p)
+                     #f)))
         (if (hash-has-key? ht name)
-          (let* ((l (hash-ref ht name)))
-            (hash-set! ht name (append (list idx) l)))
-          (hash-set! ht name (list idx)))))
-    ht))
+            (let* ((l (hash-ref ht name)))
+              (hash-set! ht name (append (list idx) l)))
+            (hash-set! ht name (list idx)))))
+    ht)))
 
 (begin-for-syntax
   (define-syntax-class plus-or-minus
@@ -540,32 +873,34 @@
    (pattern
     (~seq body))))
 
-
 (define-for-syntax (get-slice-start-and-range stx slice-colon index-start index-end array-range)
-  (if (and (syntax->datum array-range)
-           slice-colon)
-    (with-syntax* 
-      ((index-start-expanded (if (syntax->datum index-start)
-                               (local-expand index-start 'expression '())
-                               0))
-       (index-end-expanded (if (syntax->datum index-end)
-                             (local-expand index-end 'expression '())
-                             (car (get-type-range (to-landau-type stx (list 'int array-range))))))
-       (index-start-expanded_ (if (atom-number #'index-start-expanded)
-                                (atom-number #'index-start-expanded)
-                                #'index-start-expanded))
-       (index-end-expanded_ (if (atom-number #'index-end-expanded)
-                              (atom-number #'index-end-expanded)
-                              #'index-end-expanded))
-       (slice-range (if (and (number? (syntax->datum #'index-end-expanded_)) 
-                             (number? (syntax->datum #'index-start-expanded_)))
-                      (fx- (syntax->datum #'index-end-expanded_) (syntax->datum #'index-start-expanded_))
-                      (datum->syntax stx `(_int- ,#'index-end-expanded_ ,#'index-start-expanded_)))))
-      (values #'index-start-expanded_ #'slice-range))
-    (values #f #f)))
+  (if (and (syntax->datum array-range) slice-colon)
+      (with-syntax* ((index-start-expanded (if slice-colon 
+                                               (if (syntax->datum index-start)
+                                                   (local-expand index-start 'expression '())
+                                                   0)
+                                               #f))
+                     (index-end-expanded (if slice-colon
+                                             (if (syntax->datum index-end)
+                                                 (local-expand index-end 'expression '())
+                                                 (if (atom-number array-range)
+                                                     (atom-number array-range)
+                                                     (datum->syntax stx (atom-number #`#,(local-expand (datum->syntax stx (car (syntax->datum array-range))) 'expression '())))))
+                                             #f))
+                     (index-start-expanded_ (if (atom-number #'index-start-expanded)
+                                                (atom-number #'index-start-expanded)
+                                                #'index-start-expanded))
+                     (index-end-expanded_ (if (atom-number #'index-end-expanded)
+                                              (atom-number #'index-end-expanded)
+                                              #'index-end-expanded))
+                     (slice-range (if (and (number? (syntax->datum #'index-end-expanded_)) (number? (syntax->datum #'index-start-expanded_)))
+                                      (fx- (syntax->datum #'index-end-expanded_) (syntax->datum #'index-start-expanded_))
+                                      (datum->syntax stx `(_int- ,#'index-end-expanded_ ,#'index-start-expanded_)))))
+        (values #'index-start-expanded_ #'slice-range))
+      (values #f #f)))
 
-
-(define/contract-for-syntax
+(begin-for-syntax
+ (define/contract 
   (check-func stx func-vs func-args funcs-info current-variables current-arguments)
   (-> (syntax/c any/c) var-symbol/c (listof any/c) funcs-info/c current-variables/c current-arguments/c
       void?)
@@ -578,9 +913,9 @@
          (output-range (func-info-output-range func-info)))
     (unless (equal? arity (length func-args))
       (raise-syntax-error
-        #f
-        (format "function ~a arity mismatch: expects ~a, but given ~a" (var-symbol-.name func-vs) arity (length func-args))
-        stx))
+       #f
+       (format "function ~a arity mismatch: expects ~a, but given ~a" (var-symbol-.name func-vs) arity (length func-args))
+       stx))
     (for ((expected-arg-type (in-list args-type))
           (provided-arg (in-list func-args))
           (arg-number (in-naturals 1)))
@@ -593,60 +928,60 @@
              (var-name (syntax-property expanded-arg 'get-value-name))
              (var-is-slice? (is-slice? expanded-arg-type))
              (var-type (if var-name 
-                         (let ((var (search-variable var-name current-variables)))
-                           (if var 
-                             (variable-type var)
-                             (let ((arg (search-argument var-name current-arguments)))
-                               (if arg
-                                 (argument-type arg)
-                                 #f))))
-                         #f))
+                           (let ((var (search-variable var-name current-variables)))
+                             (if var 
+                                 (variable-type var)
+                                 (let ((arg (search-argument var-name current-arguments)))
+                                   (if arg
+                                       (argument-type arg)
+                                       #f))))
+                           #f))
              (var-base-type (if var-type (car var-type) expanded-arg-type))
              (var-range (if var-type (cadr var-type) '()))
              (var-range-expanded (if (empty? var-range)
-                                   #f 
-                                   (atom-number (local-expand (datum->syntax stx (car var-range)) 'expression '()))))
+                                     #f 
+                                     (atom-number (local-expand (datum->syntax stx (car var-range)) 'expression '()))))
 
              (expected-arg-base-type (car expected-arg-type))
              (expected-arg-range (cdr expected-arg-type)))
 
         (when (and expected-arg-range (not var-range-expanded))
           (raise-syntax-error
-            #f
-            (format "argument ~a should be an array" arg-number)
-            stx))
-
+           #f
+           (format "argument ~a should be an array" arg-number)
+           stx))
+                
         (when (and (not expected-arg-range) var-range-expanded)
           (raise-syntax-error
-            #f
-            (format "argument ~a should not be an array" arg-number)
-            stx))
+           #f
+           (format "argument ~a should not be an array" arg-number)
+           stx))
 
         (when var-is-slice?
           (raise-syntax-error
-            #f
-            (format "slices can not be passed to funcitons. Function ~a was given a slice as a ~a argument" (var-symbol-.name func-vs) arg-number)
-            stx))
-
-
+           #f
+           (format "slices can not be passed to funcitons. Function ~a was given a slice as a ~a argument" (var-symbol-.name func-vs) arg-number)
+           stx))
+                
+                
         (unless (equal? (format "~a" expected-arg-base-type) (format "~a" var-base-type))
           (unless (equal? var-base-type 'dual-l) 
             (raise-syntax-error
-              #f
-              (format "argument ~a type mismatch. Expects ~a, but ~a given."
-                      arg-number
-                      expected-arg-base-type
-                      var-base-type)
-              stx)))
-
+             #f
+             (format "argument ~a type mismatch. Expects ~a, but ~a given."
+                     arg-number
+                     expected-arg-base-type
+                     var-base-type)
+             stx)))
+                
         (unless (equal? expected-arg-range var-range-expanded)
           (raise-syntax-error
-            #f
-            (format "argument ~a range mismatch. Expects array of length ~a, but the provided argumnt has length of ~a"
-                    arg-number
-                    expected-arg-range
-                    var-range-expanded)
-            stx))))))
+           #f
+           (format "argument ~a range mismatch. Expects array of length ~a, but the provided argumnt has length of ~a"
+                   arg-number
+                   expected-arg-range
+                   var-range-expanded)
+           stx)))))))
 
 ; (begin-for-syntax
 ;   (define/contract
@@ -659,7 +994,28 @@
 ;           (hash-keys (hash-ref need-derivatives-table key))
 ;           #f))))
 
+(begin-for-syntax
+  (struct getter-info (type ix-info) #:prefab)
+  (define getter-info/c
+    (struct/c
+     getter-info
+     (or/c 'cell 'slice 'var)
+     (or/c (syntax/c any/c) false/c)))
+  (define (getter-is-slice? getter-info) (equal? (getter-info-type getter-info) 'slice))
+  (define (getter-is-cell? getter-info) (equal? (getter-info-type getter-info) 'cell))
+  (define (getter-is-var? getter-info) (equal? (getter-info-type getter-info) 'var)))
 
+
+(begin-for-syntax
+  (define/contract
+    (make-getter-info index slice)
+    (-> (syntax/c any/c) (syntax/c any/c) getter-info/c)
+    (when (and (syntax->datum index) (syntax->datum slice))
+      (error (format "bug: getter-type: index and slice has non'#f values: ~a ~a" (syntax->datum index) (syntax->datum slice))))
+    (cond
+      ((syntax->datum index) (getter-info 'cell index))
+      ((syntax->datum slice) (getter-info 'slice #f))
+      (else (getter-info 'var #f)))))
 
 (define-for-syntax (not-void? it) (not (equal? (void) it)))
 
@@ -699,96 +1055,3 @@
     #:attr index-start #'pat.index-start
     #:attr index-end #'pat.index-end)
    ))
-
-(begin-for-syntax
- (define (timeit! time-table time-key proc)
-   (define tik (current-inexact-milliseconds))
-   (define r (proc))
-   (define tok (current-inexact-milliseconds))
-   (hash-update! time-table time-key (lambda (old-time) (fl+ old-time (fl- tok tik))) 0.0)
-   (hash-update! time-table (string->symbol (format "~a-counts" time-key))
-                 (lambda (x) (add1 x)) 0)
-   r)
-
- (define (timeit/values! time-table time-key proc)
-   (define tik (current-inexact-milliseconds))
-   (define vals (call-with-values proc list))
-   (define tok (current-inexact-milliseconds))
-   (hash-update! time-table time-key (lambda (old-time) (fl+ old-time (fl- tok tik))) 0.0)
-   (hash-update! time-table (string->symbol (format "~a-counts" time-key))
-                 (lambda (x) (add1 x)) 0)
-   (apply values vals))
-
-
- (define
-   (search-name stx ctx name name-stx dx-name-str-in-current-al get-name-mode-on idx)
-   #| (-> (syntax/c any/c) |# 
-          #|     (or/c func-context/c #f) |# 
-          #|     symbol? |# 
-          #|     (syntax/c any/c) |# 
-          #|     (or/c string? false/c) |#
-          #|     boolean? |#
-          #|     (syntax/c any/c) |#
-          #|     ;; NOTE: (resolved-value type name-is-dx src-pos) |#
-          #|     (values (or/c any-number? (syntax/c any/c)) type/c boolean? integer?)) |#
-
-   (let 
-     ;; NOTE: src-pos is used to separate variables with the same name
-     ((fake-src-pos 0)
-      (not-dx-name #f))
-     (cond
-       ((timeit! TIME-TABLE 'search-constant (thunk (hash-has-key? constants name)))
-        (let ((c (hash-ref constants name)))
-          (let ((type (constant-type c)))
-            (if (and (is-array-type? type) (atom-number idx))
-              (let ((idx-atom-number (atom-number idx)))
-                (values ;; Where to store const& in compile time or runtime? not all indexes could be resolved
-                  (rl-vector-ref (constant-array c) idx-atom-number)
-                  (constant-type c)
-                  not-dx-name
-                  fake-src-pos))
-              (values
-                (datum->syntax stx (constant-value c))
-                (constant-type c)
-                not-dx-name
-                fake-src-pos)))))
-       (else
-         (begin
-           (when (equal? ctx #f)
-             (raise-syntax-error #f "name not found" name-stx))
-           (let ((func-name (func-context-.function-name ctx))
-                 (var (timeit! TIME-TABLE 'search-variable (thunk (search-variable
-                                                         name (func-context-.current-variables ctx))))))
-             (cond
-               (var
-                 (values (datum->syntax stx (variable-symbol var))
-                         (variable-type var)
-                         (equal? (symbol->string name) dx-name-str-in-current-al)
-                         (variable-src-pos var)))
-               ((equal? name func-name)
-                (let ((func-return-value (func-context-.function-return-value ctx)))
-                  (values
-                    (datum->syntax stx func-return-value)
-                    (func-context-.function-return-type ctx)
-                    not-dx-name
-                    fake-src-pos)))
-               (else
-                 (let ((arg (timeit! TIME-TABLE 'search-argument (thunk (search-argument
-                                                               name (func-context-.current-arguments ctx))))))
-                   (cond
-                     (arg
-                       (values
-                         (datum->syntax stx (argument-symbol arg))
-                         (argument-type arg)
-                         (equal? (symbol->string name) dx-name-str-in-current-al)
-                         fake-src-pos))
-                     ((and get-name-mode-on (hash-has-key? parameters name))
-                      (values
-                        name-stx
-                        (list 'real (hash-ref parameters name))
-                        not-dx-name
-                        fake-src-pos))
-                     (else
-                       (begin
-                         (pretty-print (func-context-.current-variables ctx))
-                         (raise-syntax-error #f "name not found" name-stx))))))))))))))

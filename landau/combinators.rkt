@@ -1,11 +1,9 @@
-#lang racket/base
+#lang racket
 
 (require racket/match
          racket/fixnum
          racket/extflonum
-         racket/vector
          racket/contract
-         racket/string
          "environment.rkt"
          "target-config.rkt")
 
@@ -29,7 +27,7 @@
 (define (c-powl x y) (format "powl(~a, ~a)" x y))
 (define (c-sqrtl x) (format "sqrtl(~a)" x))
 (define (c-neg x) (format "-~a" x))
-(define (c-not x) (format "!~a" x))
+(define (c-not x) (format "not~a" x))
 (define (c-or x y) (format "(~a || ~a)" x y))
 (define (c-and x y) (format "(~a && ~a)" x y))
 (define (c-sin x) (format "sin(~a)" x))
@@ -37,19 +35,10 @@
 (define (c-sinl x) (format "sinl(~a)" x))
 (define (c-cosl x) (format "cosl(~a)" x))
 
-(define (c-for index start end body (pragma #false))
-  (let* ((indentation (offset-string (offset)))
-         (pragma-str (match pragma
-                       ("vectorize"  "#pragma vector always\n")
-                       (else "")))
-         (for-header (if pragma
-                       (string-append indentation pragma-str indentation)
-                       indentation)))
-    (string-append for-header
-                   (format "for (int ~a = ~a; ~a < ~a; ~a++) {\n~a~a}\n" index start index end index
-                           (parameterize
-                             ((offset (+ (offset) 1)))
-                             (call-with-parameterization (current-parameterization) body)) indentation))))
+(define (c-for index start end body)
+  (let ((indentation (offset-string (offset))))
+    (string-append indentation (format "for (int ~a = ~a; ~a < ~a; ~a++) {\n~a~a}\n" index start index end index
+                                       (parameterize ((offset (+ (offset) 1))) (call-with-parameterization (current-parameterization) body)) indentation))))
 
 (define (c-forever index start body)
   (let ((indentation (offset-string (offset))))
@@ -69,10 +58,6 @@
 
 (define (c-if-expr pred true-body false-body)
   (format "(~a ? ~a : ~a)" pred true-body false-body))
-
-;; NOTE: for experiment with branchless code.
-#| (define (c-if-expr pred true-body false-body) |#
-#|   (c-or (c-and pred true-body) (c-and (c-not pred) false-body))) |#
 
 (define (c-if pred true-body (false-body #f))
   (let ((indentation (offset-string (offset))))
@@ -145,17 +130,11 @@
 
 (define (to-string x)
   (if (extflonum? x)
-    ;; NOTE: print extflonum as double. Need for C backend 
-    (string-replace (format "~a" x) "t" "e") 
+    (string-replace (format "~a" x) "t" "e")
     (format "~a" x)))
 
 (define (c-make-array values-list)
   (format "{ ~a }" (string-join (map to-string values-list) ", ")))
-
-(define (vector->carray vec)
-  (format "{ ~a }"
-          (string-join
-           (vector->list (vector-map! number->string vec)) ", ")))
 
 (define (c-set-array symb idx value)
   (let ((indentation (offset-string (offset))))
@@ -164,16 +143,6 @@
 (define (c-set symb value)
   (let ((indentation (offset-string (offset))))
     (format "~a~a = ~a;\n" indentation symb value)))
-
-(define (c-dereference pointer-symb)
-  (format "*~a" pointer-symb))
-
-(define c-real-type 
-  (if (target-extfloat? TARGET)
-    "long double"
-    "double"))
-
-(define c-zero-filled-array "{ 0.0 }")
 
 (define (c-exact->inexact value)
   (if (target-extfloat? TARGET)
@@ -212,7 +181,7 @@
   (format "#include <math.h>\n\n~a" src-str))
 
 (define/contract
-  (c-declare-var name-str type (modifier-pragma 'on-stack) (value #f) (const? #f))
+  (c-declare-var name-str type (modifier-pragma 'static) (value #f) (const? #f))
   (->* (string? landau-type/c) (any/c any/c boolean?)
        string?)
   (let* ((target_ TARGET)
@@ -220,7 +189,7 @@
          (indentation (offset-string (offset)))
          ;; NOTE: all real arrays are on stack
          (modifier (match modifier-pragma
-                     ('static "static ") 
+                     ('static "static ")
                      ('on-stack "")))
          (const-modifier (if const?
                            "const "
@@ -232,25 +201,25 @@
                   (let ((arr-value (if value
                                      value
                                      "{ 0.0 }")))
-                    (format "~a~a~a ~a[~a] = ~a;\n" modifier const-modifier c-real-type name-str size arr-value)))
+                    (format "~a~a ~a[~a] = ~a;\n" const-modifier c-real-type name-str size arr-value)))
 
                  ((list 'int (list size))
                   (let ((arr-value (if value
                                      (format " = ~a" value)
                                      "")))
-                    (format "~a~a~a ~a[~a]~a;\n" modifier const-modifier "int" name-str size arr-value)))
+                    (format "~a~a~a ~a[~a]~a;\n" "int" const-modifier modifier name-str size arr-value)))
 
                  ((list 'real '())
                   (let ((var-value (if value
                                      (format " = ~a" value)
                                      "")))
-                    (format "~a~a~a ~a~a;\n" modifier const-modifier c-real-type name-str var-value)))
+                    (format "~a~a ~a~a;\n" const-modifier c-real-type name-str var-value)))
 
                  ((list 'int '())
                   (let ((var-value (if value
                                      (format " = ~a" value)
                                      "")))
-                    (format "~a~a~a ~a~a;\n" modifier const-modifier "int" name-str var-value))))))
+                    (format "~a~a ~a~a;\n" "int" const-modifier name-str var-value))))))
         (string-append indentation decl)))
 
 
@@ -259,25 +228,11 @@
     "\n"
     value))
 
-(define (to-c-func-param landau-parsed-type name-str target (is-return-variable? #f))
+(define (to-c-func-param landau-parsed-type name-str target)
   (let ((target-real (if (target-extfloat? target) "long double" "double")))
     (match landau-parsed-type
-    [(list 'real '()) (if is-return-variable? ;; Function returns using mutation
-                        (format "~a* ~a" target-real name-str)
-                        (format "~a ~a" target-real name-str))]
-    [(list 'int '()) (if is-return-variable?
-                       (format "int* ~a" name-str)
-                       (format "int ~a" name-str))]
+    [(list 'real '()) (format "~a ~a" target-real name-str)]
+    [(list 'int '()) (format "int ~a" name-str)]
     [(list 'real (list size)) (format "~a *restrict ~a" target-real name-str)]
     [(list 'int (list size)) (format "~a *restrict ~a" "int" name-str)]
     [else (error (format "bug: unsupported type: ~a" landau-parsed-type))])))
-
-
-(define/contract 
-  (c-func-arg-decl argnames args-list)
-  (-> syntax? (listof any/c) 
-      string?)
-  (if (null? (syntax-e argnames))
-    ""
-    (string-append ", " (string-join args-list ", "))))
-

@@ -5,12 +5,14 @@
                      racket/flonum
                      racket/fixnum
                      racket/extflonum
-                     "constant-propagation.rkt"
-                     "target-config.rkt"
-                     "environment.rkt"))
+                     "target-config.rkt"))
 
 (provide (for-syntax (all-defined-out)))
 
+(begin-for-syntax
+ (define __0.0 (if (target-extfloat? TARGET) 0.0t0 0.0))
+ (define __make-vector
+  (if (target-extfloat? TARGET) make-extflvector make-flvector)))
 
 (define-for-syntax (instantiate type-stx)
     (let* ((type (syntax->datum type-stx))
@@ -19,48 +21,25 @@
            (list 'dual-r (list size))
            (list 'dual-l (list size)))
        (with-syntax ((size-stx (datum->syntax type-stx size)))
-          #`(#,make-rl-vector #,#'size-stx)))
+          #`(#,__make-vector #,#'size-stx)))
       ((list 'int (list size))
        (with-syntax ((size-stx (datum->syntax type-stx size)))
-          #`(#,make-rl-vector #,#'size)))
+          #`(#,__make-vector #,#'size)))
       ((list 'real '())
-       #`#,rl0.0)
+       #`#,__0.0)
       ((list 'int '())
        #'0))))
      res))
 
 (define-for-syntax (expand-type type-stx)
-  (let* 
-    ((type (syntax->datum type-stx))
-     (res 
-       (match type
-         ((list base-type (list size))
-          (with-syntax* 
-            ((size-stx (local-expand (datum->syntax type-stx size) 'expression '())))
-            #`(list (quote #,base-type) (list #,#'size-stx))))
-         ((list base-type '())
-          #`(list (quote #,base-type) (list)))
-         )))
-    res))
-
-
-(define-for-syntax (expand-type-to-datum type-stx)
-  (define ns (make-base-namespace))
-  (eval (syntax->datum (expand-type type-stx)) ns))
-
-
-(define-for-syntax (type-range type-stx)
-  (let* ((type (syntax->datum type-stx)))
+  (let* ((type (syntax->datum type-stx))
+         (res 
      (match type
-      ((list 'list base-type (list 'list size))
-       (datum->syntax type-stx size))
-      ((list 'list base-type (list 'list))
-       (datum->syntax type-stx #'f))
+      ((list base-type (list size))
+       (with-syntax* 
+         ((size-stx (local-expand (datum->syntax type-stx size) 'expression '())))
+          #`(list (quote #,base-type) (list #,#'size-stx))))
+      ((list base-type '())
+       #`(list (quote #,base-type) (list)))
       )))
-
-(define-for-syntax (type-base type-stx)
-  (let* ((type (syntax->datum type-stx)))
-     (match type
-      ((list 'list base-type _)
-       base-type)
-      )))
+     res))

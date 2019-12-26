@@ -1,5 +1,5 @@
 {
-    "target_language": "ansi-c",
-    "use_extfloat": false,
+    "target_language": "racket",
+    "use_extfloat": true,
     "output_directory": "./"
 }

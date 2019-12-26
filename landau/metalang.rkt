@@ -1,4 +1,4 @@
-#lang racket/base
+#lang racket
 
 (require (for-syntax racket/base
                      syntax/parse
@@ -12,8 +12,6 @@
                      "combinators.rkt"
                      
                      (only-in "environment.rkt" make-landau-type))
-
-         racket/function
          "combinators.rkt"
          "type-utils.rkt"
          "runtime-defs.rkt"
@@ -126,14 +124,9 @@
                    ('racket
                     (quasisyntax/loc stx (define name value)))
                    ('ansi-c
-                    (with-syntax* ((type-expd (expand-type #'type))
-                                   (const?_ (attribute const?)))
-                                  (quasisyntax/loc
-                                    stx
-                                    (c-declare-var #,(syntax->string #'name) #,#'type-expd #,(if (attribute const?)
-                                                                                               (quote 'static)
-                                                                                               (quote 'on-stack))
-                                                   (to-string value) #,#'const?_))))))
+                    (with-syntax ((type-expd (expand-type #'type))
+                                  (const?_ (attribute const?)))
+                      (quasisyntax/loc stx (c-declare-var #,(syntax->string #'name) #,#'type-expd 'on-stack (to-string value) #,#'const?_))))))
 ))
 
 (define-syntax (_define-var-with-func-call stx)
@@ -164,22 +157,7 @@
                    ('racket
                     (syntax/loc stx (set! var value)))
                    ('ansi-c
-                    (quasisyntax/loc stx (c-set #,(syntax->string #'var) (to-string value))))))
-                ((_set! var value #t)
-                 #'(_set_by_reference! var value))
-                ((_set! var value #f)
-                 #'(_set! var value))))
-
-
-;; NOTE treat var as a pointer in case of the C backend.
-(define-syntax (_set_by_reference! stx)
-  (syntax-parse stx
-                ((_ var value)
-                 (match (target-lang TARGET)
-                   ('racket
-                    (syntax/loc stx (set! var value)))
-                   ('ansi-c
-                    (quasisyntax/loc stx (c-set (c-dereference #,(syntax->string #'var)) (to-string value))))))))
+                    (quasisyntax/loc stx (c-set #,(syntax->string #'var) (to-string value))))))))
 
 ;; NOTE: `let` like biding in Racket, redifinition in C.
 ;; Should not be used twise in the same scope
@@ -206,17 +184,14 @@
 
 (define-syntax (_for stx)
   (syntax-parse stx
-    ((_for var-name:id start end body (~optional pragma))
+    ((_for0 var-name:id start end body)
          (match (target-lang TARGET)
            ('racket
             (syntax/loc stx
                         (loop start end (lambda (var-name) body))))
            ('ansi-c
-            (if (attribute pragma)
-              (quasisyntax/loc stx
-                               (c-for #,(syntax->string #'var-name) start end (thunk body) pragma))
-              (quasisyntax/loc stx
-                               (c-for #,(syntax->string #'var-name) start end (thunk body)))))))))
+            (quasisyntax/loc stx
+                        (c-for #,(syntax->string #'var-name) start end (thunk body))))))))
 
 (define-syntax (_forever stx)
   (syntax-parse stx
@@ -572,23 +547,17 @@
 
 (define-syntax (_func-call stx)
   (syntax-parse stx
-    ((_func-call func-name func-ret-symbol args-list)
-     (match (target-lang TARGET)
-       ('racket
-        (begin
-          (quasisyntax/loc stx
-                           (#,#'func-name #,@#'args-list))))
-       ('ansi-c
-        (with-syntax* ((args-list-expanded 
-                         (for/list ((x (in-list (syntax-e #'args-list))))
-                           ;; NOTE: if argument is a number, transform it to C notation. (To get rid of extfl numbers) 
-                           (if (atom-number x)
-                             (to-string (atom-number x))
-                             x)))
-                       (args-list-stx #`(list #,@#'args-list-expanded)))
-          (quasisyntax/loc
-            stx
-            (c-func-call #,(syntax->string #'func-name) #,(syntax->string #'func-ret-symbol) #,#'args-list-stx))))))))
+                ((_func-call func-name func-ret-symbol args-list)
+                 (match (target-lang TARGET)
+                   ('racket
+                    (begin
+                      (quasisyntax/loc stx
+                                (#,#'func-name #,@#'args-list))))
+                   ('ansi-c
+                    (with-syntax ((args-list-stx #`(list #,@#'args-list)))
+                     (quasisyntax/loc
+                      stx
+                      (c-func-call #,(syntax->string #'func-name) #,(syntax->string #'func-ret-symbol) #,#'args-list-stx))))))))
 
 (define-syntax (_pure-func-call stx)
   (syntax-parse stx
@@ -635,4 +604,3 @@
            (quasisyntax/loc
             stx
             (c-func-decl #,#'c-func-pragma #,(syntax->string #'func-name) "" #,c-args (thunk (c-return #,#'body)))))))))))
-
