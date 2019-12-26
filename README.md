@@ -1,5 +1,5 @@
 # Description
-Landau is a *lan*guage for *d*ynamical systems with *au*tomatic differentiation.
+Landau is a **lan**guage for **d**ynamical systems with **au**tomatic differentiation.
 
 Landau is a Turing incomplete statically typed domain-specific differentiable language. 
 The Turing incompleteness provides 
