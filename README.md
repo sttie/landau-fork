@@ -144,7 +144,7 @@ The work is published in papers:
 # Installation
 
 1. Download and install [Racket](https://download.racket-lang.org/).
-2. Clone repository: `$ git clone https://gitlab.iaaras.ru/dolgakov/Landau.git`.
+2. Clone repository: `$ git clone https://gitlab.iaaras.ru/iaaras/landau.git`.
 3. Link Landau as a package: `$ cd Landau/ && raco link landau`.
 
 # Configuraiton
