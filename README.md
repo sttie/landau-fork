@@ -72,7 +72,7 @@ Consider the following peice of Landau code:
       for i = [0 : k]
         f[i] = 2 * g[i] + g[i] * x[i]
 ```
-The left-hand side of the assignation is differentiated symbolically.
+The right-hand side of the assignation is differentiated symbolically.
 The result of computation is stored in the corresponding array (`dgdx0`).
 Whenever the result of $`\mathrm{d}g/\mathrm{d}x_0`$ is needed, it is
 taken from the corresponding array.
