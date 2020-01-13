@@ -31,10 +31,17 @@
 (define-for-syntax df-slice-idx-name-GLOBAL 'df_slice_idx)
 (define-for-syntax dx-slice-idx-name-GLOBAL 'dx_slice_idx)
 (define-for-syntax func-slice-idx-name-GLOBAL 'func_slice_idx)
+(define-for-syntax funcs-info-GLOBAL (make-hash))
+
 (define func_slice_idx #f)
 (define df_slice_idx #f)
 (define dx_slice_idx #f)
 (define slice_idx #f)
+
+(define debug-backrun #t)
+
+(define (log-debug msg)
+  (when debug-backrun (pretty-print msg)))
 
 (begin-for-syntax
   (define-syntax-class plus-or-minus
@@ -54,7 +61,6 @@
     ((list 'func _ ...) #t)
     (_ #f)))
 
-(define-for-syntax funcs-info-GLOBAL (make-hash))
 
 (define-syntax (program stx)
   (syntax-parse stx
@@ -112,11 +118,6 @@
   (unless (equal? (car bundl-1) (car bundl-2))
     (error "bug: bundles have different type")))
   
-
-(define debug-backrun #f)
-
-(define (log-debug msg)
-  (when debug-backrun (pretty-print msg)))
 
 (define-for-syntax (expand-range rng-stx rng)
   (if rng
@@ -242,8 +243,8 @@
     ; (log-debug "actions list")
     ; (log-debug actions-list)
     (let ((rev-flat (splice-nested actions-list)))
-      (log-debug "spliced:")
-      (log-debug rev-flat)
+      ; (log-debug "spliced:")
+      ; (log-debug rev-flat)
       (let*
           ((der-table (make-hash))
            ;; NOTE: discard-table :: (var-ame, IntIndex) -> (table dx-name -> Set dx-indexes-to-discard)
@@ -468,14 +469,14 @@
 
 (define-syntax (func stx)
   (syntax-parse stx
-    (({~literal func} type:expr name:id "(" ({~literal arglist} arg*:arg-spec ...) ")" ;; FIXME: What if arglist is empty? Maybe need to make it optional and set defalultto #'#f
+    (({~literal func} type:expr name:id "(" ({~literal arglist} arg*:arg-spec ...) ")"
                       "{" body "}")
      (let* ((args (make-hash))
             (func-return-type (parse-type (syntax->datum #'type)))
             (func-name-str (symbol->string (syntax->datum #'name)))
             (func-return-value (gensym func-name-str))
             (fake-src-pos 0)
-            (func-return-range (atom-number (local-expand (datum->syntax stx (car (cadr func-return-type))) 'expression '())))
+            (func-return-range (atom-number (type-range (expand-type (datum->syntax #'type func-return-type)))))
             (func-args
              (for/list ((argname (in-list (syntax-e #'(arg*.name ...))))
                         (argtype (in-list (syntax->datum #'(arg*.type ...)))))
@@ -499,7 +500,6 @@
                                 (local-expand
                                  (datum->syntax stx (syntax->datum (caddr arg-type))) 'expression '()))))
                              (cons arg-base-type arg-range-expanded)))))
-       
 
        (when (hash-has-key? BUILT-IN-FUNCTIONS func-name-str)
          (raise-syntax-error #f "function name shadows built-in function" #'name))
@@ -508,7 +508,6 @@
         funcs-info-GLOBAL
         (var-symbol func-name-str fake-src-pos)
         (func-info func-return-value (length func-args) func-args-expanded (car func-return-type) func-return-range))
-       ;  (hash-set! funcs-return-vars-ht-GLOBAL func-name-str (cadr func-return-type))  
        (unless (equal? (car func-return-type) 'real)
          (raise-syntax-error #f "function can return only reals" #'type))
        (add-real-var! #'name func-return-type stx (syntax-parameter-value #'real-vars-table))
@@ -614,8 +613,6 @@
                                        #'index
                                        'expression '())
                               #f)))
-; (println (format "get-value: ~a ~a" name-str src-pos))
-       ;; FIXME: handle slice case
       ;  (displayln (format "~a ~a" #'name (syntax-position #'name)))
        (check-proper-getter 
         (if (attribute index) #'index #'#f) (attribute slice-colon) array-range index-expanded name-str stx)
@@ -836,7 +833,6 @@
                       (quasisyntax/loc
                           stx
                         (begin
-                          ; FIXME:
                           #,#'func-index-range-checks
                           (unless value-slice-range
                              (unless (fx= value-slice-range func-slice-range) ;; Bug is here
@@ -851,7 +847,7 @@
               (with-syntax*
                         ((func-slice-range func-slice-range)
                          (dx-slice-range dx-slice-range)
-                         (value-slice-range (coerce-to-fixnum (get-slice-range value-type))) ;; FIXME: value-slice-range is #f
+                         (value-slice-range (coerce-to-fixnum (get-slice-range value-type)))
                          (rvalue-outer-prod-range #'(fx* value-slice-range dx-slice-range))
                          (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                          (dx-slice-idx-synt (datum->syntax stx dx-slice-idx-name-GLOBAL))
@@ -1370,7 +1366,6 @@
        (list 'nested
              (list body ...)))]))
 
-;; FIXME: return (values #'(if (equal? ranege1 range2) op1 (error ...) ))
 (define-for-syntax (binary-op-cast op1 op2 stx)
   (let ((type1 (syntax-property op1 'landau-type))
         (type2 (syntax-property op2 'landau-type))
@@ -1559,15 +1554,11 @@
                  ((slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                   (pars-list-expanded (for/list ((par (in-list func-pars-list)))
                                                 (local-expand par 'expression '()))))
-               ;; FIXME: use real function array length
                (is-type_ type
                          (quasisyntax/loc
                                     stx
                                     (append #,@#'pars-list-expanded))))))))))
-        
-;  (unless (or (equal? func-str "sqr") (equal? func-str "sqrt"))
-;          (raise-syntax-error #f (format "unsupported function: ~a" func-str) stx))
-       
+
 
 (define-syntax (term stx)
   (syntax-parse stx
@@ -1583,7 +1574,6 @@
          (cond
            ((equal? type 'real)
             (is-real
-             ;; FIXME: look at the type, not only on atom or not
              (if (and expr1-atom expr2-atom)
                  (quasisyntax/loc stx #,((if (equal? op "*") fl* fl/) expr1-atom expr2-atom))
                  (with-syntax* ((e1 (if (and (equal? #f expr1-atom) (not expr1-is-int-index))
@@ -1592,9 +1582,6 @@
                                 (e2 (if (and (equal? #f expr2-atom) #t (not expr2-is-int-index))
                                         expr2-casted
                                         #'(list))))
-                   ;  (println (format "term: initial: ~a ~a" #'expr1 #'expr1))
-                   ;  (println (format "term: expanded: ~a ~a" expr1-expanded expr1-expanded))
-                   ;  (println (format "term: final: ~a ~a" #'e1 #'e2))
                    (syntax/loc stx (append e1 e2))))))
            ((is-slice? type)
             (is-type_ type (with-syntax* ((e1 (if (and (equal? #f expr1-atom) (not expr1-is-int-index))
@@ -1852,7 +1839,6 @@
            (when (and (not slice-colon_) (is-slice? (syntax->datum #'value-type)))
              (raise-syntax-error #f "the right-hand expression is a slice, but the left-hand one is not. A slice must be assigned to a slice" stx))
            (when slice-colon_
-             ;; FIXME: check ranges casting r range is equal to l range
              (when (syntax->datum #'index-start-expanded)
                (throw-if-not-int-index #'getter.index-start #'index-start-expanded))
              (when (syntax->datum #'index-end-expanded)

@@ -638,8 +638,7 @@
                                                                 need-derivatives-table 
                                                                 stx)))
                                  (df-size (car (if (empty? (cadr df-type)) (list 1) (cadr df-type))))
-                                 ;; FIXME: Could be malfored; not shure
-                                 (dx-mapped-type (list 'real (list dx-mapped-size)))
+                                 (dx-mapped-type (make-landau-type 'real dx-mapped-size))
                                  (dual-r-var (add-variable!
                                               current-variables
                                               (datum->syntax #f (make-var-der-name arg-vs dx-name-str))

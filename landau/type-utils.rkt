@@ -43,3 +43,19 @@
        #`(list (quote #,base-type) (list)))
       )))
      res))
+
+(define-for-syntax (type-range type-stx)
+  (let* ((type (syntax->datum type-stx)))
+     (match type
+      ((list 'list base-type (list 'list size))
+       (datum->syntax type-stx size))
+      ((list 'list base-type (list 'list))
+       (datum->syntax type-stx #'f))
+      )))
+
+(define-for-syntax (type-base type-stx)
+  (let* ((type (syntax->datum type-stx)))
+     (match type
+      ((list 'list base-type _)
+       base-type)
+      )))
