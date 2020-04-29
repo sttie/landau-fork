@@ -315,6 +315,201 @@
 ;          (quasisyntax/loc stx (#,(if (equal? op "+")) )))
 ;         #'(format "(~a ~a ~a)" x op y)))
 
+(begin-for-syntax
+  (define/contract 
+    ;; NOTE: generate mappings for basic variable (not array)
+    ;; return mappings (straigt and inverse) vectors and their symbols
+    ;; WARNING: mutate need-only-value-set
+    ;; WARNING: mutate current-variables 
+    ;; WARNING: mutate need-derivatives-table
+    (generate-mappings-for-basic-variable! der-table 
+                                           var-name-key 
+                                           need-only-value-set
+                                           need-derivatives-table 
+                                           dx-name-str 
+                                           current-variables)
+    (-> der-table/c var-symbol/c need-only-value-set/c need-derivatives-table/c dx-name/c current-variables/c
+        (values
+          (or/c symbol? #f)
+          (or/c fxvector? #f)
+          (or/c symbol? #f)
+          (or/c fxvector? #f)))
+    ;; NOTE: ditry trick with passing ref to ref-to-key. der-table include only (list/c df-name/c integer?) keys
+    (let ((df-table (dtbl-get-df-table 
+                      der-table
+                      (ref-to-key (list 'array-ref var-name-key 0)))))
+      (cond
+        ((hash-empty? df-table)
+         (set-add! need-only-value-set var-name-key)
+         (values #f #f #f #f))
+
+        (else
+          (cond
+            ((hash-has-key? df-table dx-name-str)
+             (let* ((der-bundle (hash-ref df-table dx-name-str))
+                    (dx-indexes-sorted
+                      (sort (if (equal? 'dx-idxs (car der-bundle))
+                              (set->list (cadr der-bundle))
+                              (error "bug: car is not 'dx-idxs")) <))
+                    (mapped-dx-size (length dx-indexes-sorted))
+                    (mapping (for/fxvector ((i (in-list dx-indexes-sorted))) i))
+                    (inv-mapping-period-value (fx+ (apply fxmax dx-indexes-sorted) 1))
+                    (dx-idx-mapping (make-fxvector inv-mapping-period-value -1)))
+
+               ;; TODO: refactor
+               ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
+               (if (ndt-member? need-derivatives-table var-name-key)
+                 (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
+                   (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
+                 (hash-set!
+                   need-derivatives-table
+                   var-name-key
+                   (make-hash (list (cons dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value))))))
+
+               (for ((dx-idx (in-list dx-indexes-sorted))
+                     (mapped-dx-index (in-naturals)))
+                 (fxvector-set! dx-idx-mapping dx-idx mapped-dx-index))
+
+               (values
+
+                 (add-variable!
+                   current-variables
+                   (datum->syntax #f (make-var-mappings-name var-name-key dx-name-str))
+                   'mappings)
+
+                 mapping
+
+                 (add-variable!
+                   current-variables
+                   (datum->syntax #f (make-dx-idxs-mappings-name var-name-key dx-name-str))
+                   'dx-mappings)
+
+                 dx-idx-mapping)))
+
+            (else (values #f #f #f #f))))))))
+
+(begin-for-syntax
+  (define/contract
+    (generate-mappings-for-array-variable! der-table
+                                           var-name-key
+                                           need-only-value-set 
+                                           need-derivatives-table
+                                           dx-name-str 
+                                           current-variables
+                                           n-mappings
+                                           grouped-keys-table)
+    (-> der-table/c
+        var-symbol/c
+        need-only-value-set/c
+        need-derivatives-table/c
+        dx-name/c
+        current-variables/c
+        fixnum?
+        grouped-keys-table/c 
+        (values 
+          (or/c symbol? #f)
+          (or/c fxvector? #f)
+          (or/c symbol? #f)
+          (or/c fxvector? #f)))
+    (let* ((df-tables-are-empty
+             (for/and ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+               (let ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                 (hash-empty? df-table)))))
+
+      (if df-tables-are-empty
+        (begin
+          (set-add! need-only-value-set var-name-key)
+          (values #f #f #f #f))
+        ;; FIXME: at some indexses (hash-ref df-table dx-name-str) can hae no value
+        (let ((df-tables-has-no-dx-key
+                (for/and ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                  (let ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                    (not (hash-has-key? df-table dx-name-str))))))
+
+
+          (if df-tables-has-no-dx-key
+            (values #f #f #f #f)
+            (let* ((needed-dx-idx-count
+                     (for/list ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                       (let
+                         ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                         (cond
+                           ((hash-empty? df-table) 0)
+                           ((hash-has-key? df-table dx-name-str)
+                            (let* ((der-bundle (hash-ref df-table dx-name-str))
+                                   (dx-indexes
+                                     (if (equal? 'dx-idxs (car der-bundle))
+                                       (set->list (cadr der-bundle))
+                                       (error "bug: car is not 'dx-idxs"))))
+                              (length dx-indexes)))
+                           (else 0)))))
+                   ;(i (writeln (format "needed-dfdx-idxs-count: ~a" needed-dx-idx-count)))
+                   (mapped-dx-size
+                     (apply fxmax needed-dx-idx-count))
+                   ;; NOTE: df-mappings is a vector size of df-array * dx-period. Left-aligned, padded right with -1
+                   ;; df-mappings :: Vector (U (List dx-idx) Bool)
+                   (df-mappings (make-fxvector (fx* n-mappings mapped-dx-size) -1))
+
+                   (inv-mapping-period-value
+                     (fx+ 1 (apply fxmax
+                                   (for/list ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                                     (let* ((df-table
+                                              (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+                                       (if (hash-has-key? df-table dx-name-str)
+                                         (let* ((der-bundle (hash-ref df-table dx-name-str)))
+
+                                           (apply fxmax
+                                                  (if (equal? 'dx-idxs (car der-bundle))
+                                                    (set->list (cadr der-bundle))
+                                                    (error "bug: car is not 'dx-idxs"))))
+                                         0))))))
+
+                   (dx-idx-mappings (make-fxvector (fx* n-mappings inv-mapping-period-value) -1)))
+              ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
+
+              (if (hash-has-key? need-derivatives-table var-name-key)
+                (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
+
+                  (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
+                (hash-set!
+                  need-derivatives-table
+                  var-name-key
+                  (make-hash (list (cons dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value))))))
+
+              (for ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
+                (let* ((df-table
+                         (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
+
+                  (when (hash-has-key? df-table dx-name-str)
+                    (let* ((der-bundle (hash-ref df-table dx-name-str))
+                           (dx-indexes-sorted
+                             ;; FIXME: try to cast to vector and sort it
+                             (sort (if (equal? 'dx-idxs (car der-bundle))
+                                     (set->list (cadr der-bundle))
+                                     (error "bug: car is not 'dx-idxs")) <)))
+                      ;(dx-idx-mapping (make-fxvector (fx+ (apply fxmax dx-indexes-sorted) 1) -1))
+                      (for ((dx-idx (in-list dx-indexes-sorted))
+                            (mapped-dx-index (in-naturals)))
+                        (fxvector-set! dx-idx-mappings
+                                       (fx+ (fx* var-array-idx inv-mapping-period-value) dx-idx) mapped-dx-index))
+                      (for ((dx-idx (in-list dx-indexes-sorted))
+                            (i (in-naturals)))
+                        (fxvector-set! df-mappings (fx+ (fx* mapped-dx-size var-array-idx) i) dx-idx))))))
+
+              (values
+                (add-variable!
+                  current-variables
+                  (datum->syntax #f 
+                                 (make-var-mappings-name var-name-key dx-name-str))
+                  'mappings)
+                df-mappings
+                (add-variable!
+                  current-variables
+                  (datum->syntax #f 
+                                 (make-dx-idxs-mappings-name var-name-key dx-name-str))
+                  'dx-mappings)
+                dx-idx-mappings))))))))
+
 (define-for-syntax (atom-number stx)
   (let ((v (syntax->datum stx)))
     (match v
@@ -361,223 +556,82 @@
       ;  (println "need-derivatives-table")
       ;  (pretty-print need-derivatives-table)
       (with-syntax
-          ((decl-list
-            (for/list ((var-name-key (in-list (hash-keys grouped-keys-table))))
-              (let* (
-                     (var-size (rvt-get-var-size real-vars-table var-name-key))
-                     (n-mappings (if var-size var-size 1))
-                     (is-basic-variable (not (rvt-var-is-array real-vars-table var-name-key))))
-                (let-values
-                    (((mapping-var-symbol df-mappings-vec dx-idx-mappings-var-symbol dx-idx-mappings-vec)
-                      (cond
-                        (is-basic-variable
-                         ;; NOTE: non-array variable
-                         ;; NOTE: ditry trick with passing ref to ref-to-key. der-table include only (list/c stirng? integer?) keys
-                         (let ((df-table (dtbl-get-df-table 
-                                          der-table
-                                          (ref-to-key (list 'array-ref var-name-key 0)))))
-                           (cond
-                             ((hash-empty? df-table)
-                              (set-add! need-only-value-set var-name-key)
-                              (values #f #f #f #f))
-                          
-                             (else
-                              (cond
-                                ((hash-has-key? df-table dx-name-str)
-                                 (let* ((der-bundle (hash-ref df-table dx-name-str))
-                                        (dx-indexes-sorted
-                                         (sort (if (equal? 'dx-idxs (car der-bundle))
-                                                   (set->list (cadr der-bundle))
-                                                   (error "bug: car is not 'dx-idxs")) <))
-                                        (mapped-dx-size (length dx-indexes-sorted))
-                                        (mapping (for/fxvector ((i (in-list dx-indexes-sorted))) i))
-                                        (inv-mapping-period-value (fx+ (apply fxmax dx-indexes-sorted) 1))
-                                        (dx-idx-mapping (make-fxvector inv-mapping-period-value -1)))
-                                   
-                                   ; (unless dx-name-str (error "foo"))
-                                   ;; TODO: refactor
-                                   ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
-                                   (if (ndt-member? need-derivatives-table var-name-key)
-                                     (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
-                                       (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
-                                     (hash-set!
-                                      need-derivatives-table
-                                      var-name-key
-                                      (make-hash (list (cons dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value))))))
-                                   
-                                   (for ((dx-idx (in-list dx-indexes-sorted))
-                                         (mapped-dx-index (in-naturals)))
-                                     (fxvector-set! dx-idx-mapping dx-idx mapped-dx-index))
-                                   
-                                   (values
-                                    
-                                    (add-variable!
-                                     current-variables
-                                     (datum->syntax #f (make-var-mappings-name var-name-key dx-name-str))
-                                     'mappings)
-                                    
-                                    mapping
-                                    
-                                    (add-variable!
-                                     current-variables
-                                     (datum->syntax #f (make-dx-idxs-mappings-name var-name-key dx-name-str))
-                                     'dx-mappings)
-                                    
-                                    dx-idx-mapping)))
-                                
-                                (else (values #f #f #f #f)))))))
-                            
-                        ;; NOTE: array variable
-                        (else
-                         (let* ((df-tables-are-empty
-                                 (for/and ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
-                                   (let ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
-                                     (hash-empty? df-table)))))
-                                 
-                           (if df-tables-are-empty
-                               (begin
-                                 (set-add! need-only-value-set var-name-key)
-                                 (values #f #f #f #f))
-                               ;; FIXME: at some indexses (hash-ref df-table dx-name-str) can hae no value
-                               (let ((df-tables-has-no-dx-key
-                                      (for/and ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
-                                        (let ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
-                                          (not (hash-has-key? df-table dx-name-str))))))
-                                      
-                                  
-                                 (if df-tables-has-no-dx-key
-                                     (values #f #f #f #f)
-                                     (let* ((needed-dx-idx-count
-                                             (for/list ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
-                                               (let
-                                                   ((df-table (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
-                                                 (cond
-                                                   ((hash-empty? df-table) 0)
-                                                   ((hash-has-key? df-table dx-name-str)
-                                                    (let* ((der-bundle (hash-ref df-table dx-name-str))
-                                                           (dx-indexes
-                                                            (if (equal? 'dx-idxs (car der-bundle))
-                                                                (set->list (cadr der-bundle))
-                                                                (error "bug: car is not 'dx-idxs"))))
-                                                      (length dx-indexes)))
-                                                   (else 0)))))
-                                            ;(i (writeln (format "needed-dfdx-idxs-count: ~a" needed-dx-idx-count)))
-                                            (mapped-dx-size
-                                             (apply fxmax needed-dx-idx-count))
-                                            ;; NOTE: df-mappings is a vector size of df-array * dx-period. Left-aligned, padded right with -1
-                                            ;; df-mappings :: Vector (U (List dx-idx) Bool)
-                                            (df-mappings (make-fxvector (fx* n-mappings mapped-dx-size) -1))
+        ((decl-list
+           (for/list ((var-name-key (in-list (hash-keys grouped-keys-table))))
+             (let* ((var-size (rvt-get-var-size real-vars-table var-name-key))
+                    (n-mappings (if var-size var-size 1))
+                    (is-basic-variable (not (rvt-var-is-array real-vars-table var-name-key))))
+               (let-values
+                 (((mapping-var-symbol df-mappings-vec dx-idx-mappings-var-symbol dx-idx-mappings-vec)
+                   (cond
+                     (is-basic-variable
+                       ;; NOTE: non-array variable
+                       (generate-mappings-for-basic-variable! der-table 
+                                                              var-name-key
+                                                              need-only-value-set
+                                                              need-derivatives-table
+                                                              dx-name-str 
+                                                              current-variables))
 
-                                            (inv-mapping-period-value
-                                             (fx+ 1 (apply fxmax
-                                                           (for/list ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
-                                                             (let* ((df-table
-                                                                     (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
-                                                               (if (hash-has-key? df-table dx-name-str)
-                                                                   (let* ((der-bundle (hash-ref df-table dx-name-str)))
+                     ;; NOTE: array variable
+                     (else
+                       (generate-mappings-for-array-variable! der-table
+                                                              var-name-key
+                                                              need-only-value-set 
+                                                              need-derivatives-table
+                                                              dx-name-str 
+                                                              current-variables
+                                                              n-mappings
+                                                              grouped-keys-table)))))
+                 (match lang
+                   ;; NOTE: Racket lang
+                   ('racket
+                    (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
+                      (begin
+                        (with-syntax* 
+                          ((dx-idx-mappings-vec-syntax dx-idx-mappings-vec)
+                           (mapping-var-symbol (datum->syntax stx mapping-var-symbol))
+                           (dx-idx-mappings-var-symbol (datum->syntax stx dx-idx-mappings-var-symbol))
+                           (dx-name-str dx-name-str)
+                           (debug-msg
+                             (if debug
+                               (quasisyntax/loc
+                                 stx
+                                 (displayln
+                                   (string-append
+                                     (format "~a ' ~a mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'df-mappings-vec)
+                                     (format "~a ' ~a inv-mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'dx-idx-mappings-vec))))
 
-                                                                     (apply fxmax
-                                                                            (if (equal? 'dx-idxs (car der-bundle))
-                                                                                (set->list (cadr der-bundle))
-                                                                                (error "bug: car is not 'dx-idxs"))))
-                                                                   0))))))
+                               #'(void))))
+                          (with-syntax
+                            ((df-mappings-vec (fxvec->vec df-mappings-vec))
+                             (dx-idx-mappings-vec (fxvec->vec dx-idx-mappings-vec)))
+                            (quasisyntax/loc
+                              stx
+                              (begin (define mapping-var-symbol (vec->fxvec df-mappings-vec))
+                                     (define dx-idx-mappings-var-symbol (vec->fxvec dx-idx-mappings-vec))
+                                     debug-msg)))))
 
-                                            (dx-idx-mappings (make-fxvector (fx* n-mappings inv-mapping-period-value) -1)))
-                                       ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
+                      #'(void)))
 
+                   ;; NOTE: ANSI-C lang
+                   ('ansi-c
+                    (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
+                      (with-syntax ((df-mappings-vec (vector->carray (fxvector->vector df-mappings-vec)))
+                                    (df-mappings-vec-size (fxvector-length df-mappings-vec))
+                                    (dx-idx-mappings-vec (vector->carray (fxvector->vector dx-idx-mappings-vec)))
+                                    (dx-idx-mappings-vec-size (fxvector-length dx-idx-mappings-vec))
+                                    (mapping-var-symbol (symbol->string mapping-var-symbol))
+                                    (dx-idx-mappings-var-symbol (symbol->string dx-idx-mappings-var-symbol)))
+                        (quasisyntax/loc stx
+                                         (list
+                                           (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "static")
+                                           ;(log-debug (format "~a mappings: ~a" #,var-name-key #,#'df-mappings-vec))
+                                           (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "static"))))
+                      ;(log-debug (format "~a inv-mappings: ~a" #,var-name-key #,#'dx-idx-mappings-vec))
 
-                                       
-                                       (if (hash-has-key? need-derivatives-table var-name-key)
-                                           (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
+                      #'""))))))))
 
-                                             (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
-                                           (hash-set!
-                                            need-derivatives-table
-                                            var-name-key
-                                            (make-hash (list (cons dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value))))))
-
-                                       (for ((var-array-idx (in-list (hash-ref grouped-keys-table var-name-key))))
-                                         (let* ((df-table
-                                                 (hash-ref der-table (ref-to-key (list 'array-ref var-name-key var-array-idx)))))
-
-                                           (when (hash-has-key? df-table dx-name-str)
-                                             (let* ((der-bundle (hash-ref df-table dx-name-str))
-                                                    (dx-indexes-sorted
-                                                     ;; FIXME: try to cast to vector and sort it
-                                                     (sort (if (equal? 'dx-idxs (car der-bundle))
-                                                               (set->list (cadr der-bundle))
-                                                               (error "bug: car is not 'dx-idxs")) <)))
-                                               ;(dx-idx-mapping (make-fxvector (fx+ (apply fxmax dx-indexes-sorted) 1) -1))
-                                               (for ((dx-idx (in-list dx-indexes-sorted))
-                                                     (mapped-dx-index (in-naturals)))
-                                                 (fxvector-set! dx-idx-mappings
-                                                                (fx+ (fx* var-array-idx inv-mapping-period-value) dx-idx) mapped-dx-index))
-                                               (for ((dx-idx (in-list dx-indexes-sorted))
-                                                     (i (in-naturals)))
-                                                 (fxvector-set! df-mappings (fx+ (fx* mapped-dx-size var-array-idx) i) dx-idx))))))
-
-                                       (values
-                                        (add-variable!
-                                         current-variables
-                                         (datum->syntax #f 
-                                                         (make-var-mappings-name var-name-key dx-name-str))
-                                         'mappings)
-                                        df-mappings
-                                        (add-variable!
-                                         current-variables
-                                         (datum->syntax #f 
-                                                         (make-dx-idxs-mappings-name var-name-key dx-name-str))
-                                         'dx-mappings)
-                                        dx-idx-mappings))))))))))
-
-                                    
-                  (match lang
-                         ;; NOTE: Racket lang
-                      ('racket
-                       (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
-                          (begin
-                            (with-syntax* 
-                                ((dx-idx-mappings-vec-syntax dx-idx-mappings-vec)
-                                 (mapping-var-symbol (datum->syntax stx mapping-var-symbol))
-                                 (dx-idx-mappings-var-symbol (datum->syntax stx dx-idx-mappings-var-symbol))
-                                 (dx-name-str dx-name-str)
-                                 (debug-msg
-                                  (if debug
-                                      (quasisyntax/loc stx
-                                        (displayln
-                                         (string-append
-                                          (format "~a ' ~a mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'df-mappings-vec)
-                                          (format "~a ' ~a inv-mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'dx-idx-mappings-vec))))
-                                   
-                                      #'(void))))
-                              (with-syntax
-                                  ((df-mappings-vec (fxvec->vec df-mappings-vec))
-                                   (dx-idx-mappings-vec (fxvec->vec dx-idx-mappings-vec)))
-                                (quasisyntax/loc stx
-                                  (begin (define mapping-var-symbol (vec->fxvec df-mappings-vec))
-                                         (define dx-idx-mappings-var-symbol (vec->fxvec dx-idx-mappings-vec))
-                                         debug-msg)))))
-                                   
-                          #'(void)))
-                  
-                      ;; NOTE: ANSI-C lang
-                      ('ansi-c
-                       (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
-                         (with-syntax ((df-mappings-vec (vector->carray (fxvector->vector df-mappings-vec)))
-                                       (df-mappings-vec-size (fxvector-length df-mappings-vec))
-                                       (dx-idx-mappings-vec (vector->carray (fxvector->vector dx-idx-mappings-vec)))
-                                       (dx-idx-mappings-vec-size (fxvector-length dx-idx-mappings-vec))
-                                       (mapping-var-symbol (symbol->string mapping-var-symbol))
-                                       (dx-idx-mappings-var-symbol (symbol->string dx-idx-mappings-var-symbol)))
-                           (quasisyntax/loc stx
-                                            (list
-                                             (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "static")
-                               ;(log-debug (format "~a mappings: ~a" #,var-name-key #,#'df-mappings-vec))
-                                             (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "static"))))
-                          ;(log-debug (format "~a inv-mappings: ~a" #,var-name-key #,#'dx-idx-mappings-vec))
-                         
-                         #'""))))))))
-            
         (syntax-e #'decl-list)))))
 
 ;; NOTE: iterate through args, if arg need derivatives then

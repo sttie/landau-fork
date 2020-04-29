@@ -320,6 +320,8 @@
       (set! funcs-info-GLOBAL (car functions-data-assocs-list))
 
       (let-values
+        ;; NOTE: Make getter functions to access derivatives values
+        ;; Each backend has it's own getter implementation
        (((get-dfdx/array get-dfdx/array-dx) (make-derivative-getter-func/array stx))
         ((get-dfdx) (make-derivative-getter-func stx)))
        (with-syntax*
@@ -1113,6 +1115,7 @@
              ;; NOTE: fill need-derivarives-table
              (filter not-void? (flatten (for/list ((dx-name-str (in-hash-keys (func-context-.dx-names-hash-set ctx))))
                                                   (make-mappings-decl-list! dx-name-str grouped-keys-table stx)))))
+            ;; NOTE: Generate syntax for derivatives storage
             ;; NOTE: Use only needed dx-names here
             (der-decl-list (make-der-decl-list! args stx))
             (func-return-type-final
@@ -1120,7 +1123,7 @@
                ((set-member? (func-context-.need-only-value-set ctx) func-name-vs)
                 func-return-type)
                ((ndt-member? (func-context-.need-derivatives-table ctx) 
-                               func-name-vs)
+                             func-name-vs)
                 (make-dual-type func-return-type 'dual-l))
                ;; TODO: func value is not needed; do not need to run body
                (else func-return-type)))

@@ -13,4 +13,5 @@ tests/c-code/src_generated
 **/.vscode
 *.so
 *.dylib
+**/tags/**
 
