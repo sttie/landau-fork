@@ -245,6 +245,19 @@
 (define prohibition-list/c (listof binding-type/c))
 ;; der-table keys, with grouped array cells 
 ; (define grouped-by-names/c (hash/c var-symbol/c (or/c (listof integer?) (list/c boolean?))))
+
+(struct derivatives-info 
+  (.der-table
+    .need-only-value-set
+    .need-derivatives-table)
+  #:prefab)
+
+(define derivatives-info/c
+  (struct/c derivatives-info
+            der-table/c
+            need-only-value-set/c
+            need-derivatives-table/c))
+
 ;; NOTE: functions
 
 (define (new-variables-nesting vars)

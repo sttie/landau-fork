@@ -1,11 +1,10 @@
 #lang racket
 #| INFO: Routines for generating direct and inverse mappings |#
 (require 
-  (only-in "common-for-syntax.rkt" vec->fxvec fxvector->vector define/contract-for-syntax)
+  (only-in "common-for-syntax.rkt" vector->carray fxvector->vector)
   (only-in "combinators.rkt" c-define-array)
   (for-syntax racket/syntax
               racket/base
-              racket/vector
               racket/match
               racket/set
               racket/contract
@@ -13,7 +12,7 @@
               "target-config.rkt"
               "combinators.rkt"
               "metalang.rkt"
-              (only-in "common-for-syntax.rkt" fxvec->vec)
+              (only-in "common-for-syntax.rkt" fxvec->vec vector->carray)
               racket/stxparam
               racket/list
               racket/flonum
@@ -24,7 +23,8 @@
 
 (define-for-syntax debug #f)
 
-(define/contract-for-syntax
+(begin-for-syntax
+  (define/contract 
   ;; NOTE: generate mappings for basic variable (not array)
   ;; return mappings (straigt and inverse) vectors and their symbols
   ;; WARNING: mutate need-only-value-set
@@ -67,8 +67,6 @@
 
              ;; TODO: refactor
              ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
-             (unless (var-symbol/c var-name-key)
-               (error "71")) 
              (if (ndt-member? need-derivatives-table var-name-key)
                (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
                  (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))
@@ -97,11 +95,12 @@
 
                dx-idx-mapping)))
 
-          (else (values #f #f #f #f)))))))
+          (else (values #f #f #f #f))))))))
 
 
 ;; NOTE: WARNING: mutation derivatives-info
-(define/contract-for-syntax
+(begin-for-syntax
+  (define/contract
   (generate-mappings-for-array-variable! derivatives-info
                                          current-variables 
                                          var-name-key
@@ -219,23 +218,16 @@
                 (datum->syntax #f 
                                (make-dx-idxs-mappings-name var-name-key dx-name-str))
                 'dx-mappings)
-              dx-idx-mappings)))))))
+              dx-idx-mappings))))))))
 
-(define-for-syntax (fxvector-member val vec )
-  (for/or ((vec-val (in-fxvector vec)))
-    (equal? val vec-val)))
-
-(define-for-syntax (include-minus-one? vec)
-  (match (fxvector-member -1 vec)
-    (#f #f)
-    (_ #t)))
 
 ;; NOTE: Traverse the keys of all needed variables names and allocate mappings vectors if variable need derivatives
 ;;       Mappings and dx-idx-mappings are allocated for function return value and function arguments
-;;       if thee belong to need-derivatives-set set         
+;;       if thee belong to need-derivatives-set-GLOBAL set         
 ;;       (e.g. df-table is empty) df-table :: Hash (String-key, (idx-type (Either (Set Int) Bool))
-;; WARNING: Mutation of need-derivatives-set need-only-value-set mappings-table
-(define/contract-for-syntax
+;; WARNING: Mutation of need-derivatives-set-GLOBAL need-only-value-set-GLOBAL
+(begin-for-syntax
+  (define/contract 
   (make-mappings-decl-list-helper!
     dx-name-str
     grouped-keys-table
@@ -244,7 +236,6 @@
     need-only-value-set
     need-derivatives-table
     current-variables
-    mappings-table
     lang
     stx)
   (-> string?
@@ -254,7 +245,6 @@
       need-only-value-set/c
       need-derivatives-table/c
       current-variables/c
-      mappings-table/c
       lang/c
       (syntax/c any/c)
 
@@ -296,22 +286,26 @@
                                                             dx-name-str 
                                                             n-mappings
                                                             grouped-keys-table)))))
-               (when mapping-var-symbol
-                (set-mappings! mappings-table dx-idx-mappings-var-symbol (if df-mappings-vec
-                                                                          (mappings-info (include-minus-one? df-mappings-vec))
-                                                                          #f)))
-               
-               (define mapping-is-needed? (and mapping-var-symbol dx-idx-mappings-var-symbol))
                (match lang
                  ;; NOTE: Racket lang
                  ('racket
-                  (if mapping-is-needed?
+                  (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
                     (begin
                       (with-syntax* 
                         ((dx-idx-mappings-vec-syntax dx-idx-mappings-vec)
                          (mapping-var-symbol (datum->syntax stx mapping-var-symbol))
                          (dx-idx-mappings-var-symbol (datum->syntax stx dx-idx-mappings-var-symbol))
-                         (dx-name-str dx-name-str))
+                         (dx-name-str dx-name-str)
+                         (debug-msg
+                           (if debug
+                             (quasisyntax/loc
+                               stx
+                               (displayln
+                                 (string-append
+                                   (format "~a ' ~a mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'df-mappings-vec)
+                                   (format "~a ' ~a inv-mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'dx-idx-mappings-vec))))
+
+                             #'(void))))
                         (with-syntax
                           ((df-mappings-vec (fxvec->vec df-mappings-vec))
                            (dx-idx-mappings-vec (fxvec->vec dx-idx-mappings-vec)))
@@ -319,14 +313,13 @@
                             stx
                             (begin (define mapping-var-symbol (vec->fxvec df-mappings-vec))
                                    (define dx-idx-mappings-var-symbol (vec->fxvec dx-idx-mappings-vec))
-                                   )))))
+                                   debug-msg)))))
 
                     #'(void)))
 
-                 ;; TODO USE metalang
                  ;; NOTE: ANSI-C lang
                  ('ansi-c
-                  (if mapping-is-needed? 
+                  (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
                     (with-syntax ((df-mappings-vec (vector->carray (fxvector->vector df-mappings-vec)))
                                   (df-mappings-vec-size (fxvector-length df-mappings-vec))
                                   (dx-idx-mappings-vec (vector->carray (fxvector->vector dx-idx-mappings-vec)))
@@ -335,13 +328,11 @@
                                   (dx-idx-mappings-var-symbol (symbol->string dx-idx-mappings-var-symbol)))
                       (quasisyntax/loc stx
                                        (list
-                                         (c-define-array "int" mapping-var-symbol
-                                                         df-mappings-vec-size 
-                                                         #,#'df-mappings-vec "const static")
-                                         (c-define-array "int" dx-idx-mappings-var-symbol
-                                                         dx-idx-mappings-vec-size 
-                                                         #,#'dx-idx-mappings-vec "const static"))))
+                                         (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "static")
+                                         ;(log-debug (format "~a mappings: ~a" #,var-name-key #,#'df-mappings-vec))
+                                         (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "static"))))
+                    ;(log-debug (format "~a inv-mappings: ~a" #,var-name-key #,#'dx-idx-mappings-vec))
 
                     #'""))))))))
 
-      (syntax-e #'decl-list))))
+      (syntax-e #'decl-list)))))

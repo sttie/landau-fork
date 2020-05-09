@@ -1,38 +1,39 @@
 #lang racket
 
-(require (for-syntax
-          racket/base
-          syntax/parse
-          racket/syntax
-          racket/string
-          racket/hash
-          racket/flonum
-          racket/extflonum
-          racket/fixnum
-          racket/function
-          racket/match
-          racket/pretty
-          racket/set
-          racket/serialize
-          racket/list
-          racket/contract
-          macro-debugger/stepper-text
-          profile
-          "environment.rkt"
-          "backrun.rkt"
-          "target-config.rkt"
-          "metalang.rkt"
-          (only-in "combinators.rkt" to-c-func-param))
-         (except-in "combinators.rkt" to-c-func-param)
-         "type-utils.rkt"
-         "target-config.rkt"
-         "runtime-defs.rkt"
-         "common-for-syntax.rkt"
-         "metalang.rkt"
-         racket/stxparam
-         racket/flonum
-         racket/extflonum
-         racket/fixnum)
+(require 
+  (for-syntax racket/base
+              syntax/parse
+              racket/syntax
+              racket/string
+              racket/hash
+              racket/flonum
+              racket/extflonum
+              racket/fixnum
+              racket/function
+              racket/match
+              racket/pretty
+              racket/set
+              racket/serialize
+              racket/list
+              racket/contract
+              macro-debugger/stepper-text
+              profile
+              "environment.rkt"
+              "backrun.rkt"
+              "target-config.rkt"
+              "metalang.rkt"
+              (only-in "combinators.rkt" to-c-func-param))
+  (except-in "combinators.rkt" to-c-func-param)
+  "mappings.rkt"
+  "type-utils.rkt"
+  "target-config.rkt"
+  "runtime-defs.rkt"
+  "common-for-syntax.rkt"
+  "metalang.rkt"
+  racket/stxparam
+  racket/flonum
+  racket/extflonum
+  racket/fixnum)
 
 (provide #%module-begin
           #%datum program expr term factor primary element func constant get-value
@@ -1271,7 +1272,7 @@
                                   ,assign-if-set))))
               ;; NOTE: skip declaration if value is not used
               (else
-               ;; FIXME: For testing
+               ;; FIXME: keep it For testing
                  (datum->syntax stx
                                 `(_begin
                                   (_define-var ,name-sym ,type)
@@ -1451,15 +1452,16 @@
             ((is-slice is-cell is-var) (values (getter-is-slice? getter-info)
                                                (getter-is-cell? getter-info)
                                                (getter-is-var? getter-info)))
-            ((typecheck-mode-on) (syntax-parameter-value #'typecheck-mode))
+            ;; NOTE: if typecheck-mode-on is #t then syntax is not genetated. Used for type info propagation.
+            ((typecheck-mode-on) (syntax-parameter-value #'typecheck-mode)) 
             ((expand-only-value-on) (syntax-parameter-value #'expand-value-only))
             ((get-name-mode-on) (syntax-parameter-value #'get-name-mode))
             ;; NOTE: typechecked in backrun
             ((index-start-expanded) (if is-slice 
-                                        (if (syntax->datum #'get-value.index-start)
-                                            (local-expand #'get-value.index-start 'expression '())
-                                            0)
-                                        #f))
+                                      (if (syntax->datum #'get-value.index-start)
+                                        (local-expand #'get-value.index-start 'expression '())
+                                        0)
+                                      #f))
             ((slice-range) 'range-placeholder)
             ((name-str) (symbol->string name-symb))
             ((dx-name-str-in-current-al) (syntax-parameter-value #'dx-name-in-current-al))
@@ -1471,8 +1473,8 @@
             ; ((value (resolve-constant-arrays ctx value-unresolved-constant-array #'get-value.index)))
             ((default-type) (car type))
             ((type) (if (and expand-only-value-on (equal? default-type 'dual-l))
-                        'real
-                        default-type))
+                      'real
+                      default-type))
             ((base-type) type))
          ; (println (format "debug: get-value: dx-name-str-in-current-al: ~a" dx-name-str-in-current-al))
          (with-syntax* ((value value)
@@ -1514,7 +1516,10 @@
                                              (datum->syntax stx (get-dx-idxs-mappings-variable-symbol name-vs dx-name-str-in-current-al stx #f)))
                                             (inv-mapping-period (get-inv-mapping-period name-vs dx-name-str-in-current-al stx))
                                             (al-index (datum->syntax stx 'al_index_name_symbol))
+                                            ;; NOTE: genetated function which return derivative value
+                                            ; using mappings and inverse mapping to get index where derivative is stored
                                             (func-name-stx (datum->syntax stx 'get_dfdx_var))
+                                            ;; TODO: Use different function depending on if variable has mapping and inverse mapping. Same for all other getters usage
                                             (derivative
                                              (if (or (equal? #f (syntax->datum #'dx-idxs-mappings))
                                                      (equal? #f (syntax->datum #'inv-mapping-period)))
@@ -1678,6 +1683,7 @@
                              (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'loop-var))
                                         ;; NOTE: value includes references to der-vectors and al-index-symb
                                         (_vector-set! ,#'der-vec-synt (_var-ref ,#'mapped-idx) _0.0))))))
+       ;; TODO: Do not use mapping if dual-l variable has have-mapping flag equal to #f
        (raise-syntax-error #f (format "bug: no mapping found for dual-l variable ~a" (var-symbol-.name name-vs)) stx)))))
    ))
 
