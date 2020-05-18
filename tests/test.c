@@ -1,30 +1,30 @@
 #include <math.h>
 
-static inline long double get_dfdx_cell(int full_idx8957, int dx_mapped_size8958, int al_idx8959, int inv_mapping_period8960, int *restrict dx_idx_mappings8961, long double *restrict der_vec8962) {
-  return ((al_idx8959 < inv_mapping_period8960) ? ((dx_idx_mappings8961[((inv_mapping_period8960 * full_idx8957) + al_idx8959)] >= 0) ? der_vec8962[((dx_mapped_size8958 * full_idx8957) + dx_idx_mappings8961[((inv_mapping_period8960 * full_idx8957) + al_idx8959)])] : 0.0) : 0.0);
+static inline long double get_dfdx_cell(int full_idx9259, int dx_mapped_size9260, int al_idx9261, int inv_mapping_period9262, int *restrict dx_idx_mappings9263, long double *restrict der_vec9264) {
+  return ((al_idx9261 < inv_mapping_period9262) ? ((dx_idx_mappings9263[((inv_mapping_period9262 * full_idx9259) + al_idx9261)] >= 0) ? der_vec9264[((dx_mapped_size9260 * full_idx9259) + dx_idx_mappings9263[((inv_mapping_period9262 * full_idx9259) + al_idx9261)])] : 0.0) : 0.0);
 }
 
-static inline long double get_dfdx_cell_dx(int full_idx8957, int dx_mapped_size8958, int al_idx8959, int inv_mapping_period8960, int *restrict dx_idx_mappings8961, long double *restrict der_vec8962) {
-  return ((al_idx8959 < inv_mapping_period8960) ? ((al_idx8959 == full_idx8957) ? 1.0 : ((dx_idx_mappings8961[((inv_mapping_period8960 * full_idx8957) + al_idx8959)] >= 0) ? der_vec8962[((dx_mapped_size8958 * full_idx8957) + dx_idx_mappings8961[((inv_mapping_period8960 * full_idx8957) + al_idx8959)])] : 0.0)) : 0.0);
+static inline long double get_dfdx_cell_dx(int full_idx9259, int dx_mapped_size9260, int al_idx9261, int inv_mapping_period9262, int *restrict dx_idx_mappings9263, long double *restrict der_vec9264) {
+  return ((al_idx9261 < inv_mapping_period9262) ? ((al_idx9261 == full_idx9259) ? 1.0 : ((dx_idx_mappings9263[((inv_mapping_period9262 * full_idx9259) + al_idx9261)] >= 0) ? der_vec9264[((dx_mapped_size9260 * full_idx9259) + dx_idx_mappings9263[((inv_mapping_period9262 * full_idx9259) + al_idx9261)])] : 0.0)) : 0.0);
 }
 
-static inline long double get_dfdx_var(int al_idx8964, int inv_mapping_period8965, int *restrict dx_idx_mappings8966, long double *restrict der_vec8967) {
-  return ((((al_idx8964 < inv_mapping_period8965) ? dx_idx_mappings8966[al_idx8964] : -1) >= 0) ? der_vec8967[((al_idx8964 < inv_mapping_period8965) ? dx_idx_mappings8966[al_idx8964] : -1)] : 0.0);
+static inline long double get_dfdx_var(int al_idx9266, int inv_mapping_period9267, int *restrict dx_idx_mappings9268, long double *restrict der_vec9269) {
+  return ((((al_idx9266 < inv_mapping_period9267) ? dx_idx_mappings9268[al_idx9266] : -1) >= 0) ? der_vec9269[((al_idx9266 < inv_mapping_period9267) ? dx_idx_mappings9268[al_idx9266] : -1)] : 0.0);
 }
 
-int f(long double *restrict f8968, long double *restrict m8969) {
+int f(long double *restrict f9270, long double *restrict m9271) {
   {
     for (int slice_idx = 0; slice_idx < 3; slice_idx++) {
-      f8968[(0 + slice_idx)] = 1.0e0;
+      f9270[(0 + slice_idx)] = 1.0e0;
     }
   }
   return 0;
 }
 
-int g(long double g8974) {
-  long double f8976;
-  f8976 = 1.0e0;
-  g8974 = f8976;
+int g(long double* g9276) {
+  long double f9278;
+  f9278 = 1.0e0;
+  *g9276 = f9278;
   return 0;
 }
 

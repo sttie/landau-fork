@@ -5,6 +5,8 @@ real[3] f (real[1] m)
   f[0: 3] = 1.0
 }
 
+# FIXME: g(double g123) is genetated instead of g(double* g123)
+# Need to genetate pointer to return value
 real g()
 {
   real f = 1.0

@@ -159,6 +159,17 @@
                    ('ansi-c
                     (quasisyntax/loc stx (c-set #,(syntax->string #'var) (to-string value))))))))
 
+
+;; NOTE treat var as a pointer in case of the C backend.
+(define-syntax (_set_by_reference! stx)
+  (syntax-parse stx
+                ((_ var value)
+                 (match (target-lang TARGET)
+                   ('racket
+                    (syntax/loc stx (set! var value)))
+                   ('ansi-c
+                    (quasisyntax/loc stx (c-set (c-dereference #,(syntax->string #'var)) (to-string value))))))))
+
 ;; NOTE: `let` like biding in Racket, redifinition in C.
 ;; Should not be used twise in the same scope
 ;; Should not be used to bind arrays

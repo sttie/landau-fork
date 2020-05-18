@@ -47,7 +47,7 @@
          _int+ _int- _int* _int/ _int-neg _int= _int> _int>= _int<= _int<
          _rl+ _rl- _rl* _rl/ _rl-neg
          _exact->inexact
-         _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call
+         _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call _set_by_reference!
          _sin _cos _expt _sqr _sqrt
          _0.0 _1.0 _2.0 _0.5
          _break _nothing _empty-statement _local)
@@ -993,7 +993,8 @@
                      (string-append ", " (string-join args-list ", ")))))
            (with-syntax* ((ret-str (datum->syntax stx func-return-value-str))
                           (name-str name-str)
-                          (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET))
+                          ;; NOTE: is-return-variable?: #t
+                          (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET #t))
                           (arg-decl arg-decl))
              (quasisyntax/loc stx
                (syntax-parameterize
@@ -1947,15 +1948,16 @@
                       (name (func-call-info-.name fci))
                       (type (func-call-info-.type fci))
                       (args (func-call-info-.arg-list fci)))
-                     (with-syntax
-                       ((func-name (datum->syntax stx (string->symbol name)))
-                        (type type)
-                        (func-ret (datum->syntax stx func-ret-symb))
-                        (args-stx args))
-                       (datum->syntax
-                        stx
-                        `(_define-var-with-func-call ,#'func-ret ,#'type
-                                                      (_func-call ,#'func-name ,#'func-ret ,#'args-stx)))))))))
+                 (displayln "FIXME: handle cases when return type is 'int or a single 'real value")
+                 (with-syntax
+                   ((func-name (datum->syntax stx (string->symbol name)))
+                    (type type)
+                    (func-ret (datum->syntax stx func-ret-symb))
+                    (args-stx args))
+                   (datum->syntax
+                     stx
+                     `(_define-var-with-func-call ,#'func-ret ,#'type
+                                                  (_func-call ,#'func-name ,#'func-ret ,#'args-stx)))))))))
 
 (define-syntax (assignation stx)
   (syntax-parse stx
@@ -2008,6 +2010,7 @@
             ((left-hand-getter-info) (make-getter-info #'getter.index
                                                        #'getter.slice-colon))
             ((name_) (syntax->datum #'name))
+            ((assignation-to-func-return-variable) (equal? name_ (func-context-.function-name ctx)))
             ((name-str) (symbol->string name_))
             ((slice-colon_) (syntax->datum #'getter.slice-colon))
             ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
@@ -2029,7 +2032,9 @@
                        (al-index-symb (datum->syntax stx al-index-name_))
                        (index-start-expanded_ index-start-expanded_)
                        (slice-range slice-range)
-                       ;; NOTE: Call function used in right-part and mutate their return arrays. C backend.
+                       ;; NOTE: Call function used in the right-part and mutate their return arrays. C backend.
+                       ;; It is needed because there is no general way to return a value from a C function.  
+                       ;; It is not about return from the curent function
                        (funcs-ret-assign (make-func-ret-assign stx func-call-ht-value)))
            (cond
              ((getter-is-var? left-hand-getter-info)
@@ -2075,9 +2080,13 @@
                         ;    (not (equal? name_ func-name)))
                         ;   #'#f)
                    ((or 'dual-b 'real)
-                    (datum->syntax stx
-                                   `(_begin
-                                     (_set! ,#'sym ,#'value-exp-value-part))))
+                    (if assignation-to-func-return-variable
+                      (datum->syntax stx
+                                     `(_begin
+                                        (_set_by_reference! ,#'sym ,#'value-exp-value-part)))
+                      (datum->syntax stx
+                                     `(_begin
+                                        (_set! ,#'sym ,#'value-exp-value-part)))))
                    ('int
                     (datum->syntax stx
                                    `(_set! ,#'sym (_exact->inexact ,#'value-exp-value-part))))))

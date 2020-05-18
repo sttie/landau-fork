@@ -144,6 +144,9 @@
   (let ((indentation (offset-string (offset))))
     (format "~a~a = ~a;\n" indentation symb value)))
 
+(define (c-dereference pointer-symb)
+  (format "*~a" pointer-symb))
+
 (define (c-exact->inexact value)
   (if (target-extfloat? TARGET)
     (format "((long double) ~a)" value)
@@ -228,11 +231,15 @@
     "\n"
     value))
 
-(define (to-c-func-param landau-parsed-type name-str target)
+(define (to-c-func-param landau-parsed-type name-str target (is-return-variable? #f))
   (let ((target-real (if (target-extfloat? target) "long double" "double")))
     (match landau-parsed-type
-    [(list 'real '()) (format "~a ~a" target-real name-str)]
-    [(list 'int '()) (format "int ~a" name-str)]
+    [(list 'real '()) (if is-return-variable? ;; Function returns using mutation
+                        (format "~a* ~a" target-real name-str)
+                        (format "~a ~a" target-real name-str))]
+    [(list 'int '()) (if is-return-variable?
+                       (format "int* ~a" name-str)
+                       (format "int ~a" name-str))]
     [(list 'real (list size)) (format "~a *restrict ~a" target-real name-str)]
     [(list 'int (list size)) (format "~a *restrict ~a" "int" name-str)]
     [else (error (format "bug: unsupported type: ~a" landau-parsed-type))])))
