@@ -284,9 +284,9 @@
                                        #'index
                                        'expression '())
                               #f)))
-      ;  (displayln (format "~a ~a" #'name (syntax-position #'name)))
-       (check-proper-getter 
-        (if (attribute index) #'index #'#f) (attribute slice-colon) array-range index-expanded name-str stx)
+      ;; FIXME Do not fail array get-value without index of slice. Array can be passed to a function: f(arr)
+       #| (check-proper-getter |# 
+       #|  (if (attribute index) #'index #'#f) (attribute slice-colon) array-range index-expanded name-str stx) |#
        (with-syntax ((value value)
                      (name-symb (var-symbol (symbol->string name_) src-pos)))
          

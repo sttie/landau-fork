@@ -1,14 +1,24 @@
 #lang landau
 
-real[3] f (real[1] m)
+real[3] y (real m)
 {
-  f[0: 3] = 1.0
+  y[0: 3] = m 
 }
 
-# FIXME: g(double g123) is genetated instead of g(double* g123)
-# Need to genetate pointer to return value
-real g()
+real[3] f (real[3] m)
 {
-  real f = 1.0
-  g = f
+  f[0: 3] = m[:] 
+}
+
+real[3] z (real[3] m, real[3] n)
+{
+  z[0: 3] = m[:] 
+}
+
+# FIXME enforce execution order
+real[3] g()
+{
+  real[3] arr
+  arr[:] = f(z(y(1.0), f(arr)))
+  g[:] = arr[:]
 }

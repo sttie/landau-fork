@@ -130,7 +130,8 @@
 
 (define (to-string x)
   (if (extflonum? x)
-    (string-replace (format "~a" x) "t" "e")
+    ;; NOTE: print extflonum as double. Need for C backend 
+    (string-replace (format "~a" x) "t" "e") 
     (format "~a" x)))
 
 (define (c-make-array values-list)

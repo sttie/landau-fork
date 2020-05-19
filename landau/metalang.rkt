@@ -558,17 +558,23 @@
 
 (define-syntax (_func-call stx)
   (syntax-parse stx
-                ((_func-call func-name func-ret-symbol args-list)
-                 (match (target-lang TARGET)
-                   ('racket
-                    (begin
-                      (quasisyntax/loc stx
-                                (#,#'func-name #,@#'args-list))))
-                   ('ansi-c
-                    (with-syntax ((args-list-stx #`(list #,@#'args-list)))
-                     (quasisyntax/loc
-                      stx
-                      (c-func-call #,(syntax->string #'func-name) #,(syntax->string #'func-ret-symbol) #,#'args-list-stx))))))))
+    ((_func-call func-name func-ret-symbol args-list)
+     (match (target-lang TARGET)
+       ('racket
+        (begin
+          (quasisyntax/loc stx
+                           (#,#'func-name #,@#'args-list))))
+       ('ansi-c
+        (with-syntax* ((args-list-expanded 
+                         (for/list ((x (in-list (syntax-e #'args-list))))
+                           ;; NOTE: if argument is a number, transform it to C notation. (To get rid of extfl numbers) 
+                           (if (atom-number x)
+                             (to-string (atom-number x))
+                             x)))
+                       (args-list-stx #`(list #,@#'args-list-expanded)))
+          (quasisyntax/loc
+            stx
+            (c-func-call #,(syntax->string #'func-name) #,(syntax->string #'func-ret-symbol) #,#'args-list-stx))))))))
 
 (define-syntax (_pure-func-call stx)
   (syntax-parse stx

@@ -47,19 +47,20 @@
          _int+ _int- _int* _int/ _int-neg _int= _int> _int>= _int<= _int<
          _rl+ _rl- _rl* _rl/ _rl-neg
          _exact->inexact
-         _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call _set_by_reference!
+         _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call
          _sin _cos _expt _sqr _sqrt
          _0.0 _1.0 _2.0 _0.5
          _break _nothing _empty-statement _local)
 
 (define-syntax-parameter func-context #f)
-(define-syntax-parameter func-call-ht 'func-call-ht-not-set)
+(define-syntax-parameter func-call-box 'func-call-box-not-set)
 ;; NOTE: dx name in currnt assertion loop
 (define-syntax-parameter dx-name-in-current-al #f)
 ;; NOTE: Expansion modes
 (define-syntax-parameter typecheck-mode #f)
 (define-syntax-parameter expand-value-only #f)
 (define-syntax-parameter get-name-mode #f)
+(define-syntax-parameter func-is-called-inside-argument #f)
 
 (define-for-syntax slice-idx-name-GLOBAL 'slice_idx)
 (define-for-syntax df-slice-idx-name-GLOBAL 'df_slice_idx)
@@ -721,9 +722,13 @@
 
 
                    ((or 'real 'int)
-                    (map-built-in-function stx func-str (list #'expanded) (list expanded-type-datum)))
+                    (map-built-in-function stx func-str (list #'expanded) 
+                                           (list expanded-type-datum)))
                    (else
-                    (raise-syntax-error #f (format "functions ~a do not accept given type: ~a" (hash-keys BUILT-IN-FUNCTIONS) (syntax->datum #'expanded-type)) stx))))))
+                    (raise-syntax-error #f 
+                                        (format "functions ~a do not accept given type: ~a" 
+                                                (hash-keys BUILT-IN-FUNCTIONS) (syntax->datum #'expanded-type)) 
+                                        stx))))))
            (2 (with-syntax*
                  ((expanded-1 (local-expand (car func-pars-list) 'expression '()))
                   (expanded-2 (local-expand (cadr func-pars-list) 'expression '())))
@@ -743,13 +748,12 @@
                         ("pow"
                          (is-type_ 'dual-b
                                    (quasisyntax/loc 
-                                      stx
-                                      (list
+                                     stx
+                                     (list
                                        #,#'applied-to-real
                                        #,(datum->syntax
                                            stx
-                                           `(_rl* ,#'n (_expt ,#'dual-b-value (_rl- ,#'n _1.0)) ,#'dual-b-derivative))))))
-                        )))
+                                           `(_rl* ,#'n (_expt ,#'dual-b-value (_rl- ,#'n _1.0)) ,#'dual-b-derivative)))))))))
 
                    ((list 'dual-b 'dual-b)
                     (error "not implemented"))
@@ -761,63 +765,97 @@
                     (map-built-in-function stx func-str (list #'expanded-1 #'expanded-2) (list 'real 'real)))
 
                    (else
-                    (raise-syntax-error #f (format "bug: function ~a do not accept given types: ~a" (list "pow") (list expanded-type-1 expanded-type-2)) stx))))))))))
+                    (raise-syntax-error #f 
+                                        (format "bug: function ~a do not accept given types: ~a" 
+                                                (list "pow") 
+                                                (list expanded-type-1 expanded-type-2)) 
+                                        stx))))))))))
            ;; NOTE: user defined functions
            
            (begin
-             (check-func
-              stx 
-              func-vs
-              func-pars-list 
-              funcs-info-GLOBAL
-              (func-context-.current-variables (syntax-parameter-value #'func-context))
-              (func-context-.current-arguments (syntax-parameter-value #'func-context)))
-             (let* ((subfunc-call-ht-value (make-hash))
+             #| (check-func |#
+             #|  stx |# 
+             #|  func-vs |#
+             #|  func-pars-list |# 
+             #|  funcs-info-GLOBAL |#
+             #|  (func-context-.current-variables (syntax-parameter-value #'func-context)) |#
+             #|  (func-context-.current-arguments (syntax-parameter-value #'func-context))) |#
+             (let* ((subfunc-call-box-value (make-state (list)))
                     (func-args-list-casted 
-                    (for/list ((par (in-list func-pars-list)))
-                      (with-syntax* ((par par)
-                                     (par-exp-value-part (extract (local-expand
-                                                                   #`(syntax-parameterize
-                                                                         ((expand-value-only #t)
-                                                                          (func-call-ht #,subfunc-call-ht-value))
-                                                                       par) 'expression '()))))
-                        #'par-exp-value-part)))
-                   (func-args-list-casted_ #`(list #,@func-args-list-casted))
-                   (func-slice-range (func-info-output-range (hash-ref funcs-info-GLOBAL func-vs)))
-                   (func-base-type (func-info-output-base-type (hash-ref funcs-info-GLOBAL func-vs)))
-                   (func-return-symbol (gensym func-str))
-                   (func-call-ht (syntax-parameter-value #'func-call-ht)))
-
+                      (for/list ((par (in-list func-pars-list)))
+                        (with-syntax* ((par par)
+                                       (par-exp-value-part
+                                         (extract (local-expand
+                                                    #`(syntax-parameterize
+                                                        ((expand-value-only #t)
+                                                         ;;  NOTE: whenever a child func-call is macro called, func-call-box will be populated
+                                                         (func-call-box #,subfunc-call-box-value)
+                                                         (func-is-called-inside-argument #t))
+                                                        par) 'expression '()))))
+                                      #'par-exp-value-part)))
+                    (func-args-list-casted_ #`(list #,@func-args-list-casted))
+                    (func-slice-range (func-info-output-range (hash-ref funcs-info-GLOBAL func-vs)))
+                    (func-base-type (func-info-output-base-type (hash-ref funcs-info-GLOBAL func-vs)))
+                    (func-return-symbol (gensym func-str))
+                    ;; NOTE: Read func-call-box, possibly populated by child func-call macro
+                    (func-call-box-value (syntax-parameter-value #'func-call-box)))
+               ;; NOTE: Update pairs-list. It is processed in assignation macro
                (when (equal? 'ansi-c (target-lang TARGET))
-                 (unless (equal? func-call-ht 'func-call-ht-not-set)
-                         (begin
-                          (hash-union! func-call-ht subfunc-call-ht-value) ;; FIXME: check if it is OK
-                          (define/contract func-call-info-value func-call-info/c (func-call-info
-                                                                                  func-str
-                                                                                  (make-landau-type func-base-type func-slice-range)
-                                                                                  func-args-list-casted))
-                          (hash-set! func-call-ht func-return-symbol func-call-info-value))))
-
-               (if func-slice-range
-                   (is-type_ (landau-type func-base-type func-slice-range)
-                             (with-syntax*
-                               ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
-                                (func-return-symbol-stx (datum->syntax stx func-return-symbol)))
-                               (match (target-lang TARGET)
-                                 ('racket
-                                  (datum->syntax
-                                   stx
-                                   `(_vector-ref 
-                                     (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)
-                                     (_var-ref ,#'slice-idx))))
-                                 ('ansi-c
-                                  (datum->syntax
-                                   stx
-                                   `(_vector-ref ,#'func-return-symbol-stx (_var-ref ,#'slice-idx)))))))
-                   (is-type_ func-base-type
-                             ;; FIXME: in C case ,#'func-return-symbol-stx should be transformed to (format "&~a" func-return-symbol)
-                             (datum->syntax stx
-                                            `(_func-call ,#'function-name ,#'func-return-symbol-stx (list ,@func-args-list-casted))))))))))))
+                 (unless (equal? func-call-box-value 'func-call-box-not-set)
+                   (begin
+                     (define/contract func-call-info-value 
+                                      func-call-info/c 
+                                      (func-call-info
+                                        func-str
+                                        (make-landau-type func-base-type func-slice-range)
+                                        func-args-list-casted))
+                     (define updated-call-pairs-list 
+                       (append (read-state subfunc-call-box-value) ;; func-call list from children 
+                               (read-state func-call-box-value) ;; func-call list from neighbors 
+                                                                ;; on the same call depth level 
+                               (list (func-call-info-pair ;; func-call from the current function
+                                       func-return-symbol 
+                                       func-call-info-value))))
+                     (write-state! func-call-box-value updated-call-pairs-list))))
+               (displayln func-call-box-value)
+                     (if func-slice-range
+                       (is-type_ (landau-type func-base-type func-slice-range)
+                                 (with-syntax*
+                                   ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
+                                    (func-return-symbol-stx (datum->syntax stx func-return-symbol)))
+                                   ;; NOTE: check if function call is inside another function call
+                                   ;; If it is so, return vector literal should be genetated instead of slice:
+                                   ; arr[:] = f(g(h(1.0))) -> 
+                                   ;                  h(h_ret, 1.0);
+                                   ;                  g(g_ret, h_ret); 
+                                   ;                  f(f_ret, g_ret);
+                                   ;                  for (int slice_idx = 0; slice_idx < SLICE_LEN; slice_idx++)
+                                   ;                     arr[slice-idx + SLICE_START] = f_ret[slice-idx + SLICE_START];
+                                   (if (syntax-parameter-value #'func-is-called-inside-argument)
+                                     (match (target-lang TARGET)
+                                       ('racket
+                                        (datum->syntax
+                                          stx
+                                          `(_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)))
+                                       ('ansi-c
+                                        (datum->syntax
+                                          stx
+                                          `(_var-ref,#'func-return-symbol-stx))))
+                                     (match (target-lang TARGET)
+                                       ('racket
+                                        (datum->syntax
+                                          stx
+                                          `(_vector-ref 
+                                             (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)
+                                             (_var-ref ,#'slice-idx))))
+                                       ('ansi-c
+                                        (datum->syntax
+                                          stx
+                                          `(_vector-ref ,#'func-return-symbol-stx (_var-ref ,#'slice-idx))))))))
+                       (is-type_ func-base-type
+                                 ;; FIXME: in C case ,#'func-return-symbol-stx should be transformed to (format "&~a" func-return-symbol)
+                                 (datum->syntax stx
+                                                `(_func-call ,#'function-name ,#'func-return-symbol-stx (list ,@func-args-list-casted))))))))))))
            
 
 (define-syntax (factor stx)
@@ -993,8 +1031,7 @@
                      (string-append ", " (string-join args-list ", ")))))
            (with-syntax* ((ret-str (datum->syntax stx func-return-value-str))
                           (name-str name-str)
-                          ;; NOTE: is-return-variable?: #t
-                          (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET #t))
+                          (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET))
                           (arg-decl arg-decl))
              (quasisyntax/loc stx
                (syntax-parameterize
@@ -1936,28 +1973,28 @@
 
 ;; NOTE: used only when 'ansi-c backend
 (begin-for-syntax
- (define/contract (make-func-ret-assign stx func-call-ht-value)
-   (-> (syntax/c any/c) func-call-ht/c
+ (define/contract (make-func-ret-assign stx func-call-info-pair-list)
+   (-> (syntax/c any/c) (listof func-call-info-pair/c)
        (listof (syntax/c any/c)))
    (if (or (equal? (target-lang TARGET) 'racket) 
-           (hash-empty? func-call-ht-value))
+           (empty? func-call-info-pair-list))
      (list (datum->syntax stx '(_nothing)))
-     (for/list ((func-ret-symb (in-hash-keys func-call-ht-value)))
-                                    ;; FIXME: handle cases when return type is 'int or a single 'real value 
-               (let* ((fci (hash-ref func-call-ht-value func-ret-symb))
-                      (name (func-call-info-.name fci))
-                      (type (func-call-info-.type fci))
-                      (args (func-call-info-.arg-list fci)))
-                 (displayln "FIXME: handle cases when return type is 'int or a single 'real value")
-                 (with-syntax
-                   ((func-name (datum->syntax stx (string->symbol name)))
-                    (type type)
-                    (func-ret (datum->syntax stx func-ret-symb))
-                    (args-stx args))
-                   (datum->syntax
-                     stx
-                     `(_define-var-with-func-call ,#'func-ret ,#'type
-                                                  (_func-call ,#'func-name ,#'func-ret ,#'args-stx)))))))))
+     (for/list ((p (in-list func-call-info-pair-list)))
+       ;; FIXME: handle cases when return type is 'int or a single 'real value 
+       (let* ((func-ret-symb (func-call-info-pair-.func-ret-symbol p))
+              (fci (func-call-info-pair-.func-call-info p))
+              (name (func-call-info-.name fci))
+              (type (func-call-info-.type fci))
+              (args (func-call-info-.arg-list fci)))
+         (with-syntax
+           ((func-name (datum->syntax stx (string->symbol name)))
+            (type type)
+            (func-ret (datum->syntax stx func-ret-symb))
+            (args-stx args))
+           (datum->syntax
+             stx
+             `(_define-var-with-func-call ,#'func-ret ,#'type
+                                          (_func-call ,#'func-name ,#'func-ret ,#'args-stx)))))))))
 
 (define-syntax (assignation stx)
   (syntax-parse stx
@@ -1989,7 +2026,7 @@
     (((~literal assignation) name:id 
                              getter:getter-cls
                              "=" value:expr)
-     (let ((func-call-ht-value (make-hash)))
+     (let ((func-call-info-pair-list (make-state (list))))
       (with-syntax ((index-exp (local-expand #'getter.index 'expression '()))
                    ;; NOTE: expand to get the value-type. If value-type is dual then local-expand it for each dx
                    (value-exp-typecheck-mode (extract (local-expand
@@ -1999,7 +2036,8 @@
                    (value-exp-value-part (local-expand
                                                   #`(syntax-parameterize
                                                      ((expand-value-only #t)
-                                                      (func-call-ht #,func-call-ht-value))
+                                                      ;; NOTE: func-call populates this table 
+                                                      (func-call-box #,func-call-info-pair-list))
                                                      value) 'expression (list))))
 
        (when (syntax->datum #'getter.index)
@@ -2010,7 +2048,6 @@
             ((left-hand-getter-info) (make-getter-info #'getter.index
                                                        #'getter.slice-colon))
             ((name_) (syntax->datum #'name))
-            ((assignation-to-func-return-variable) (equal? name_ (func-context-.function-name ctx)))
             ((name-str) (symbol->string name_))
             ((slice-colon_) (syntax->datum #'getter.slice-colon))
             ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
@@ -2032,10 +2069,8 @@
                        (al-index-symb (datum->syntax stx al-index-name_))
                        (index-start-expanded_ index-start-expanded_)
                        (slice-range slice-range)
-                       ;; NOTE: Call function used in the right-part and mutate their return arrays. C backend.
-                       ;; It is needed because there is no general way to return a value from a C function.  
-                       ;; It is not about return from the curent function
-                       (funcs-ret-assign (make-func-ret-assign stx func-call-ht-value)))
+                       ;; NOTE: Call function used in right-part and mutate their return arrays. C backend.
+                       (funcs-ret-assign (make-func-ret-assign stx (read-state func-call-info-pair-list))))
            (cond
              ((getter-is-var? left-hand-getter-info)
               ;; NOTE: Non-array case
@@ -2080,13 +2115,9 @@
                         ;    (not (equal? name_ func-name)))
                         ;   #'#f)
                    ((or 'dual-b 'real)
-                    (if assignation-to-func-return-variable
-                      (datum->syntax stx
-                                     `(_begin
-                                        (_set_by_reference! ,#'sym ,#'value-exp-value-part)))
-                      (datum->syntax stx
-                                     `(_begin
-                                        (_set! ,#'sym ,#'value-exp-value-part)))))
+                    (datum->syntax stx
+                                   `(_begin
+                                     (_set! ,#'sym ,#'value-exp-value-part))))
                    ('int
                     (datum->syntax stx
                                    `(_set! ,#'sym (_exact->inexact ,#'value-exp-value-part))))))

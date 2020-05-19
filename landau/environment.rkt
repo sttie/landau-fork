@@ -53,6 +53,21 @@
          .src-pos)
         #:prefab)
 
+;; NOTE: aka box. Box becomes immutable after passing them as synax-parameters
+(define (state/c a) (hash/c fixnum? a))
+
+(define/contract (make-state init-value)  
+                 (-> any/c (state/c any/c))
+                 (make-hash (list (cons 0 init-value))))
+
+(define/contract (read-state st)
+                 (-> (state/c any/c) any/c)
+                 (hash-ref st 0))
+
+(define/contract (write-state! st value)
+                 (-> (state/c any/c) any/c void?)
+                 (hash-set! st 0 value))
+
 ;; NOTE: types
 
 (define var-symbol/c
@@ -239,6 +254,16 @@
             string?
             landau-type/c
             (listof (syntax/c any/c))))
+
+(struct func-call-info-pair
+  (.func-ret-symbol
+   .func-call-info)
+  #:prefab)
+
+(define func-call-info-pair/c
+  (struct/c func-call-info-pair
+            symbol?
+            func-call-info/c))
 
 (define func-call-ht/c (hash/c symbol? func-call-info/c))
 (define binding-type/c (or/c 'constant 'parameter 'variable 'function))
