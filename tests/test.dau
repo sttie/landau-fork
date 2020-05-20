@@ -18,7 +18,6 @@ real[3] z (real[3] m, real[3] n)
 # FIXME enforce execution order
 real[3] g()
 {
-  real[3] arr
-  arr[:] = f(z(y(1.0), f(arr)))
+  real[3] arr = f(z(y(1.0), f(arr)))
   g[:] = arr[:]
 }

@@ -1030,6 +1030,8 @@
        (list 'nested
              (list body ...)))]))
 
+
+
 (define-syntax (func-body stx)
   (syntax-parse stx
     [(_ body ...)
@@ -1575,12 +1577,23 @@
                (else
                 (quasisyntax/loc stx
                   (list '#,assign-label (list 'array-ref name-symb 0) value-exp)))))))))))
-               
 
-                 
+
+(define-syntax (decl-block stx)
+  (syntax-parse stx
+    [(_ body ...)
+     (syntax/loc stx
+       (list 'nested
+             (list body ...)))]))
 
 (define-syntax (var-decl stx)
   (syntax-parse stx
+    (({~literal var-decl};; if expr is array get-value, then emit declaration and assigantion syntax objects  
+                ((~literal type) ((~literal array-type) basic-type "[" num "]")) name:id (~seq "=" value:expr)) 
+     (datum->syntax stx `(decl-block 
+                           (var-decl (type (array-type ,#'basic-type "[" ,#'num "]")) ,#'name)
+                           (assignation ,#'name "[" ":" "]" "=" ,#'value))))
+
     (({~literal var-decl}
       type:expr name:id (~optional (~seq "=" value:expr)
                                    #:defaults ((value #'notset))))

@@ -31,6 +31,9 @@ expr-body : (var-decl | assignation | if-expr | for-expr | der-annot | der-apply
 ; NOTE: It is needed for allocation parameter's derivative arrays
 func-body : (var-decl | assignation | if-expr | for-expr | der-annot | der-apply | discard | print)*
 
+;; NOTE: Hack to return a sequence of syntax objects after expansion.
+decl-block : (var-decl | assignation)*
+
 print : "print" IDENTIFIER (expr | get-derivative) | "print" (expr | get-derivative)
 
 get-derivative : get-value "'" get-value

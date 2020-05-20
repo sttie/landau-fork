@@ -37,7 +37,7 @@
 
 (provide #%module-begin
           #%datum program expr term factor primary element func constant get-value
-         var-decl assignation number if-expr bool-expr bool-term
+         var-decl decl-block assignation number if-expr bool-expr bool-term
          bool-factor single-term expr-body func-body for-expr der-apply der-annot
          al_index_name_symbol discard parameter func-call slice_idx print get-derivative
 
@@ -812,50 +812,49 @@
                      (define updated-call-pairs-list 
                        (append (read-state subfunc-call-box-value) ;; func-call list from children 
                                (read-state func-call-box-value) ;; func-call list from neighbors 
-                                                                ;; on the same call depth level 
+                               ;; on the same call depth level 
                                (list (func-call-info-pair ;; func-call from the current function
                                        func-return-symbol 
                                        func-call-info-value))))
                      (write-state! func-call-box-value updated-call-pairs-list))))
-               (displayln func-call-box-value)
-                     (if func-slice-range
-                       (is-type_ (landau-type func-base-type func-slice-range)
-                                 (with-syntax*
-                                   ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
-                                    (func-return-symbol-stx (datum->syntax stx func-return-symbol)))
-                                   ;; NOTE: check if function call is inside another function call
-                                   ;; If it is so, return vector literal should be genetated instead of slice:
-                                   ; arr[:] = f(g(h(1.0))) -> 
-                                   ;                  h(h_ret, 1.0);
-                                   ;                  g(g_ret, h_ret); 
-                                   ;                  f(f_ret, g_ret);
-                                   ;                  for (int slice_idx = 0; slice_idx < SLICE_LEN; slice_idx++)
-                                   ;                     arr[slice-idx + SLICE_START] = f_ret[slice-idx + SLICE_START];
-                                   (if (syntax-parameter-value #'func-is-called-inside-argument)
-                                     (match (target-lang TARGET)
-                                       ('racket
-                                        (datum->syntax
-                                          stx
-                                          `(_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)))
-                                       ('ansi-c
-                                        (datum->syntax
-                                          stx
-                                          `(_var-ref,#'func-return-symbol-stx))))
-                                     (match (target-lang TARGET)
-                                       ('racket
-                                        (datum->syntax
-                                          stx
-                                          `(_vector-ref 
-                                             (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)
-                                             (_var-ref ,#'slice-idx))))
-                                       ('ansi-c
-                                        (datum->syntax
-                                          stx
-                                          `(_vector-ref ,#'func-return-symbol-stx (_var-ref ,#'slice-idx))))))))
-                       (is-type_ func-base-type
-                                 ;; FIXME: in C case ,#'func-return-symbol-stx should be transformed to (format "&~a" func-return-symbol)
-                                 (datum->syntax stx
-                                                `(_func-call ,#'function-name ,#'func-return-symbol-stx (list ,@func-args-list-casted))))))))))))
+               (if func-slice-range
+                 (is-type_ (landau-type func-base-type func-slice-range)
+                           (with-syntax*
+                             ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
+                              (func-return-symbol-stx (datum->syntax stx func-return-symbol)))
+                             ;; NOTE: check if function call is inside another function call
+                             ;; If it is so, return vector literal should be genetated instead of slice:
+                             ; arr[:] = f(g(h(1.0))) -> 
+                             ;                  h(h_ret, 1.0);
+                             ;                  g(g_ret, h_ret); 
+                             ;                  f(f_ret, g_ret);
+                             ;                  for (int slice_idx = 0; slice_idx < SLICE_LEN; slice_idx++)
+                             ;                     arr[slice-idx + SLICE_START] = f_ret[slice-idx + SLICE_START];
+                             (if (syntax-parameter-value #'func-is-called-inside-argument)
+                               (match (target-lang TARGET)
+                                 ('racket
+                                  (datum->syntax
+                                    stx
+                                    `(_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)))
+                                 ('ansi-c
+                                  (datum->syntax
+                                    stx
+                                    `(_var-ref,#'func-return-symbol-stx))))
+                               (match (target-lang TARGET)
+                                 ('racket
+                                  (datum->syntax
+                                    stx
+                                    `(_vector-ref 
+                                       (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)
+                                       (_var-ref ,#'slice-idx))))
+                                 ('ansi-c
+                                  (datum->syntax
+                                    stx
+                                    `(_vector-ref ,#'func-return-symbol-stx (_var-ref ,#'slice-idx))))))))
+                 (is-type_ func-base-type
+                           ;; FIXME: in C case ,#'func-return-symbol-stx should be transformed to (format "&~a" func-return-symbol)
+                           (datum->syntax stx
+                                          `(_func-call ,#'function-name ,#'func-return-symbol-stx (list ,@func-args-list-casted))))))))))))
            
 
 (define-syntax (factor stx)
@@ -1243,9 +1242,21 @@
           dual-r-vars-table
           #t))))
 
+(define-syntax (decl-block stx)
+  (syntax-parse stx
+    [(_ body ...)
+     (datum->syntax stx
+       `(_begin
+         ,@#'(body ...)))]))
 
 (define-syntax (var-decl stx)
   (syntax-parse stx
+    (({~literal var-decl};; if expr is array get-value, then emit declaration and assigantion syntax objects  
+                ((~literal type) ((~literal array-type) basic-type "[" num "]")) name:id (~seq "=" value:expr)) 
+     (datum->syntax stx `(decl-block 
+                           (var-decl (type (array-type ,#'basic-type "[" ,#'num "]")) ,#'name)
+                           (assignation ,#'name "[" ":" "]" "=" ,#'value))))
+
     (({~literal var-decl}
       type:expr name:id (~optional (~seq "=" value:expr)
                                    #:defaults ((value #'notset))))
@@ -1261,7 +1272,6 @@
                             (if (equal? (syntax->datum #'value) 'notset)
                               `(_nothing)
                               `(assignation ,#'name "=" ,#'value)))))
-            
        (check-duplicate-variable-name name_ #'name)
        (match base-type
          ('real
@@ -2012,16 +2022,24 @@
            (match op_
              ((or "+=" "-=")
               (datum->syntax stx
-                             `(assignation ,#'name ,@getter-for-splice
-                                            "="
-                                            (expr
-                                             (expr (term (factor (primary (element (get-value ,#'name ,@getter-for-splice)))))) ,binop ,#'value))))
+                             `(assignation ,#'name ,@getter-for-splice "="
+                                           (expr
+                                             (expr 
+                                               (term 
+                                                 (factor 
+                                                   (primary 
+                                                     (element 
+                                                       (get-value ,#'name ,@getter-for-splice)))))) ,binop ,#'value))))
              ((or "*=" "/=")
               (datum->syntax stx
                              `(assignation ,#'name ,@getter-for-splice "="
                                             (expr
-                                             (term
-                                              (term (factor (primary (element (get-value ,#'name ,@getter-for-splice))))) ,binop ,#'value))))))))
+                                              (term
+                                                (term 
+                                                  (factor 
+                                                    (primary 
+                                                      (element 
+                                                        (get-value ,#'name ,@getter-for-splice))))) ,binop ,#'value))))))))
 
     (((~literal assignation) name:id 
                              getter:getter-cls
@@ -2292,6 +2310,8 @@
      (datum->syntax stx
        `(_begin
          ,@#'(body ...)))]))
+
+
 
 (define-syntax (single-term stx)
   (syntax-parse stx
