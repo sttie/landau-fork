@@ -5,7 +5,8 @@
                      racket/flonum
                      racket/fixnum
                      racket/extflonum
-                     "target-config.rkt"))
+                     "target-config.rkt"
+                     "environment.rkt"))
 
 (provide (for-syntax (all-defined-out)))
 
@@ -32,17 +33,24 @@
      res))
 
 (define-for-syntax (expand-type type-stx)
-  (let* ((type (syntax->datum type-stx))
-         (res 
-     (match type
-      ((list base-type (list size))
-       (with-syntax* 
-         ((size-stx (local-expand (datum->syntax type-stx size) 'expression '())))
-          #`(list (quote #,base-type) (list #,#'size-stx))))
-      ((list base-type '())
-       #`(list (quote #,base-type) (list)))
-      )))
-     res))
+  (let* 
+    ((type (syntax->datum type-stx))
+     (res 
+       (match type
+         ((list base-type (list size))
+          (with-syntax* 
+            ((size-stx (local-expand (datum->syntax type-stx size) 'expression '())))
+            #`(list (quote #,base-type) (list #,#'size-stx))))
+         ((list base-type '())
+          #`(list (quote #,base-type) (list)))
+         )))
+    res))
+
+
+(define-for-syntax (expand-type-to-datum type-stx)
+  (define ns (make-base-namespace))
+  (eval (syntax->datum (expand-type type-stx)) ns))
+
 
 (define-for-syntax (type-range type-stx)
   (let* ((type (syntax->datum type-stx)))

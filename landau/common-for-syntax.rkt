@@ -37,6 +37,10 @@
       (f maybe-false)
       #f))
 
+(define-for-syntax (zip proc l1 l2)
+  (for/list ((lr (in-list l1)) (ll (in-list l2)))
+    (proc lr ll)))
+
 (define-for-syntax rl*
   (if (target-extfloat? TARGET)
     extfl*
@@ -114,6 +118,9 @@
 
 (define-for-syntax (with-syntax-property property-name property-value stx)
   (syntax-property stx property-name property-value #t))
+
+(define-for-syntax (read-syntax-property property-name stx)
+  (syntax-property stx property-name))
 
 (define-for-syntax (is-type stx type)
   (syntax-property stx 'landau-type type #t))
@@ -308,21 +315,9 @@
          (fmap mapping-sizes-.mapping-period 
                (ndt-get-mapping-sizes need-derivatives-table df-name dx-name))))))
 
-; (define-for-syntax (bin-op stx op type x y lang)
-;   (if (equal? lang 'racket)
-;       (match type
-;         ('real 
-;          (quasisyntax/loc stx (#,(if (equal? op "+")) )))
-;         #'(format "(~a ~a ~a)" x op y)))
 
-(define-for-syntax (atom-number stx)
-  (let ((v (syntax->datum stx)))
-    (match v
-      ((? number?) v)
-      ((? extflonum?) v)
-      ((list 'quote (? number?)) (cadr v))
-      ((list 'quote (? extflonum?)) (cadr v))
-      (else #f))))
+
+
 
 ;; NOTE: iterate through args, if arg need derivatives then
 ;; - add -der variable
@@ -363,6 +358,8 @@
                  current-arguments
                  arg-name
                  (make-dual-type df-type 'dual-l)))
+              (unless (var-symbol/c arg-vs)
+                (error "436"))
               (when (ndt-member? need-derivatives-table arg-vs)
                 (with-syntax
                     ((der-vec-decl-list-forall-dx
@@ -371,16 +368,17 @@
                           (let* ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments))
                              
                                  (arg-name-str (symbol->string arg-name))
-                                 (dx-mapped-size (check-result stx 
-                                                               (format 
-                                                                "bug: get-der-variable-dx-range-helper returned #f for a key: ~a ~a" 
-                                                                (datum->syntax #f arg-name)
-                                                                dx-name-str) 
-                                                               (get-der-variable-dx-range-helper 
-                                                                (datum->syntax #f arg-name) 
-                                                                dx-name-str 
-                                                                need-derivatives-table 
-                                                                stx)))
+                                 (dx-mapped-size (check-result
+                                                   stx 
+                                                   (format 
+                                                     "bug: get-der-variable-dx-range-helper returned #f for a key: ~a ~a" 
+                                                     arg-vs
+                                                     dx-name-str) 
+                                                   (get-der-variable-dx-range-helper 
+                                                     arg-vs
+                                                     dx-name-str 
+                                                     need-derivatives-table 
+                                                     stx)))
                                  (df-size (car (if (empty? (cadr df-type)) (list 1) (cadr df-type))))
                                  (dx-mapped-type (make-landau-type 'real dx-mapped-size))
                                  (dual-r-var (add-variable!
@@ -485,8 +483,9 @@
  (define/contract
    (check-duplicate-variable-name-helper name stx-name current-variables current-arguments function-name)
    (-> symbol? (syntax/c any/c) current-variables/c current-arguments/c symbol? void?)
-   (when (search-variable name current-variables)
-     (raise-syntax-error #f "duplicate variable declaration" stx-name))
+   #| (when (search-variable name current-variables) |#
+   #|   (pretty-print current-variables) |#
+   #|   (raise-syntax-error #f "duplicate variable declaration" stx-name)) |#
    (when (hash-has-key? constants name)
      (raise-syntax-error #f "variable name shadows constant" stx-name))
    (when (hash-has-key? parameters name)
@@ -511,12 +510,13 @@
 
 ;; NOTE: extract syntax after syntax-parameterize
 (define-for-syntax (extract stx)
-  (caddr
-   (syntax->list
-    (cadr
-     (syntax->list
-      (caddr
-       (syntax->list stx)))))))
+  (syntax-parse stx
+    (((~literal let-values) _ 
+                            ((~literal #%expression) 
+                             ((~literal let-values) _ expr))) #'expr)
+    (((~literal let-values) _ 
+                            ((~literal #%expression) 
+                             ((~literal let-values) _ _ _ expr))) #'expr)))
 
 (define-for-syntax (fxvec->vec fxvec)
   (for/vector ((i (fxvector-length fxvec)))
@@ -616,31 +616,30 @@
    (pattern
     (~seq body))))
 
+
 (define-for-syntax (get-slice-start-and-range stx slice-colon index-start index-end array-range)
-  (if (and (syntax->datum array-range) slice-colon)
-      (with-syntax* ((index-start-expanded (if slice-colon 
-                                               (if (syntax->datum index-start)
-                                                   (local-expand index-start 'expression '())
-                                                   0)
-                                               #f))
-                     (index-end-expanded (if slice-colon
-                                             (if (syntax->datum index-end)
-                                                 (local-expand index-end 'expression '())
-                                                 (if (atom-number array-range)
-                                                     (atom-number array-range)
-                                                     (datum->syntax stx (atom-number #`#,(local-expand (datum->syntax stx (car (syntax->datum array-range))) 'expression '())))))
-                                             #f))
-                     (index-start-expanded_ (if (atom-number #'index-start-expanded)
-                                                (atom-number #'index-start-expanded)
-                                                #'index-start-expanded))
-                     (index-end-expanded_ (if (atom-number #'index-end-expanded)
-                                              (atom-number #'index-end-expanded)
-                                              #'index-end-expanded))
-                     (slice-range (if (and (number? (syntax->datum #'index-end-expanded_)) (number? (syntax->datum #'index-start-expanded_)))
-                                      (fx- (syntax->datum #'index-end-expanded_) (syntax->datum #'index-start-expanded_))
-                                      (datum->syntax stx `(_int- ,#'index-end-expanded_ ,#'index-start-expanded_)))))
-        (values #'index-start-expanded_ #'slice-range))
-      (values #f #f)))
+  (if (and (syntax->datum array-range)
+           slice-colon)
+    (with-syntax* 
+      ((index-start-expanded (if (syntax->datum index-start)
+                               (local-expand index-start 'expression '())
+                               0))
+       (index-end-expanded (if (syntax->datum index-end)
+                             (local-expand index-end 'expression '())
+                             (car (get-type-range (to-landau-type stx (list 'int array-range))))))
+       (index-start-expanded_ (if (atom-number #'index-start-expanded)
+                                (atom-number #'index-start-expanded)
+                                #'index-start-expanded))
+       (index-end-expanded_ (if (atom-number #'index-end-expanded)
+                              (atom-number #'index-end-expanded)
+                              #'index-end-expanded))
+       (slice-range (if (and (number? (syntax->datum #'index-end-expanded_)) 
+                             (number? (syntax->datum #'index-start-expanded_)))
+                      (fx- (syntax->datum #'index-end-expanded_) (syntax->datum #'index-start-expanded_))
+                      (datum->syntax stx `(_int- ,#'index-end-expanded_ ,#'index-start-expanded_)))))
+      (values #'index-start-expanded_ #'slice-range))
+    (values #f #f)))
+
 
 (begin-for-syntax
  (define/contract 
@@ -737,28 +736,7 @@
 ;           (hash-keys (hash-ref need-derivatives-table key))
 ;           #f))))
 
-(begin-for-syntax
-  (struct getter-info (type ix-info) #:prefab)
-  (define getter-info/c
-    (struct/c
-     getter-info
-     (or/c 'cell 'slice 'var)
-     (or/c (syntax/c any/c) false/c)))
-  (define (getter-is-slice? getter-info) (equal? (getter-info-type getter-info) 'slice))
-  (define (getter-is-cell? getter-info) (equal? (getter-info-type getter-info) 'cell))
-  (define (getter-is-var? getter-info) (equal? (getter-info-type getter-info) 'var)))
 
-
-(begin-for-syntax
-  (define/contract
-    (make-getter-info index slice)
-    (-> (syntax/c any/c) (syntax/c any/c) getter-info/c)
-    (when (and (syntax->datum index) (syntax->datum slice))
-      (error (format "bug: getter-type: index and slice has non'#f values: ~a ~a" (syntax->datum index) (syntax->datum slice))))
-    (cond
-      ((syntax->datum index) (getter-info 'cell index))
-      ((syntax->datum slice) (getter-info 'slice #f))
-      (else (getter-info 'var #f)))))
 
 (define-for-syntax (not-void? it) (not (equal? (void) it)))
 

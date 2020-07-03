@@ -32,7 +32,7 @@ expr-body : (var-decl | assignation | if-expr | for-expr | der-annot | der-apply
 func-body : (var-decl | assignation | if-expr | for-expr | der-annot | der-apply | discard | print)*
 
 ;; NOTE: Hack to return a sequence of syntax objects after expansion.
-decl-block : (var-decl | assignation)*
+decl-block : (var-decl | assignation | func | expr-body)*
 
 print : "print" IDENTIFIER (expr | get-derivative) | "print" (expr | get-derivative)
 

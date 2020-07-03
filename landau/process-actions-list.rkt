@@ -19,7 +19,7 @@
          racket/fixnum
          "common-for-syntax.rkt")
 
-(provide process)
+(provide process! splice-nested)
 
 
 (define debug-backrun #t)
@@ -32,17 +32,18 @@
     any
     (list)))
 
+(define (splice-step x acc)
+  (cond 
+    ((list? x) (cond
+                 ((empty? x) acc)
+                 ((symbol? (first x))
+                  (cons x acc))
+                 (else
+                   (append (splice-nested x) acc))))
+    (else (error "not a list"))))
+
 (define (splice-nested lst)
-  (if (list? lst)
-      (let*
-          ((step (lambda (x acc) (if (empty? x)
-                                     acc
-                                     (begin
-                                       (if (equal? (car x) 'nested)
-                                           (append (splice-nested (second x)) acc)
-                                           (cons x acc)))))))
-        (foldl step '() lst))
-      (error "Bug: splice-nested: arg is not a list")))
+  (foldl splice-step '() lst))
       
 (define (get-idx df)
   (if (equal? (car df) 'array-ref)
@@ -139,10 +140,20 @@
 
 ;; NOTE: Traverse actions-list in forward direction and populate available-dx-table and deps-set
 (define/contract
-  (process-forward! forward-flat available-dx-table deps-set)
-  (-> (listof any/c) any/c any/c any/c)
+  (process-forward! forward-flat available-dx-table deps-set real-vars-table)
+  (-> (listof any/c) any/c any/c real-vars-table/c any/c)
   (for ((action (in-list forward-flat)))
           (match action
+
+            ((list 'var-decl name-vs type)
+             (match type
+               ((list 'real (list))
+                (hash-set! real-vars-table name-vs #f))
+
+               ((list 'real (list array-len))
+                (hash-set! real-vars-table name-vs array-len))
+               (_ (void))))
+
             ((list 'der-annot df-ref dx-ref)
              (let*-values
                  (((dx-key) (format "~a" (cadr dx-ref)))
@@ -150,6 +161,7 @@
                   ((dx-idx) (get-idx dx-ref))
                   ; ((i) (println (format "~a ~a" df-ref dx-ref)))
                   ;; NOTE: key for deps-set
+
                   ((df-key) (ref-to-key df-ref))
                   ((df-dx-table) (hash-ref! available-dx-table df-key (make-hash)))
                   ((derivatives-bundle)
@@ -175,7 +187,9 @@
                ;; NOTE: coerce-to-list used to ignore 'int and 'int-index values in the rhs 
                (for ((r-val-ref (in-list (coerce-to-list refs-list))))
                  (let ((r-val-dx-table (if (hash-has-key? available-dx-table (ref-to-key r-val-ref))
-                                           (hash-ref available-dx-table (ref-to-key r-val-ref))
+                                           (let
+                                             ((tbl (hash-ref available-dx-table (ref-to-key r-val-ref))))
+                                             tbl)
                                            #f)))
                    (when r-val-dx-table
                      (let ((r-val-dx-names (hash-keys r-val-dx-table)))
@@ -192,6 +206,10 @@
   (-> (listof any/c) any/c any/c any/c any/c any/c)
   (for ((action (in-list rev-flat)))
     (match action
+      ((list 'var-decl _ _)
+       ;; NOTE: Alreary done in process-forward!
+       (void))
+
       ((list 'der-apply df dx)
        (let*-values
          (((dx-key) (format "~a" (cadr dx)))
@@ -325,9 +343,10 @@
       (_ (void)))))
 
 
+;; NOTE: process actions-list (function actions)
 (define/contract 
-  (process actions-list dx-names-set real-vars-table)
-  (-> (listof any/c) (hash/c string? boolean?) real-vars-table/c
+  (process! actions-list dx-names-set real-vars-table)
+  (-> (listof any/c) (hash/c string? boolean?) real-vars-table/c 
       (values
        der-table/c
        dx-names-set/c
@@ -342,10 +361,17 @@
          (available-dx-table (make-hash))
          (forward-flat (reverse rev-flat))
          (deps-set (mutable-set)))
-
-        (process-forward! forward-flat available-dx-table deps-set)
+        (displayln "FIXME: check that der-table and real-vars-table are generated correctly")
+        (displayln "forward-flat:")
+        (pretty-print forward-flat)
+        ;; NOTE: populate table with function code for the future inlining, when this function is called
+        #| (pretty-print forward-flat) |#
+        (process-forward! forward-flat available-dx-table deps-set real-vars-table)
         (process-reverse! rev-flat available-dx-table deps-set der-table discard-table)
-        
+        (displayln "der-table:") 
+        (pretty-print der-table)
+        (displayln "real-vars-table")
+        (pretty-print real-vars-table)
         (values der-table dx-names-set real-vars-table)))))
 
 

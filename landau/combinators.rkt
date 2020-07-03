@@ -244,3 +244,13 @@
     [(list 'real (list size)) (format "~a *restrict ~a" target-real name-str)]
     [(list 'int (list size)) (format "~a *restrict ~a" "int" name-str)]
     [else (error (format "bug: unsupported type: ~a" landau-parsed-type))])))
+
+
+(define/contract 
+  (c-func-arg-decl argnames args-list)
+  (-> syntax? (listof any/c) 
+      string?)
+  (if (null? (syntax-e argnames))
+    ""
+    (string-append ", " (string-join args-list ", "))))
+

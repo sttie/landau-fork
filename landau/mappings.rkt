@@ -67,6 +67,8 @@
 
              ;; TODO: refactor
              ;(hash-set! mapped-dx-size-GLOBAL (make-mapped-dx-size-key var-name-key dx-name-str) mapped-dx-size)
+             (unless (var-symbol/c var-name-key)
+               (error "71")) 
              (if (ndt-member? need-derivatives-table var-name-key)
                (let ((dx-names-sizes (hash-ref need-derivatives-table var-name-key)))
                  (hash-set! dx-names-sizes dx-name-str (mapping-sizes mapped-dx-size inv-mapping-period-value)))

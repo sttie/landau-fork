@@ -1,21 +1,29 @@
 #lang racket/base
 
 (require 
- racket/syntax
- racket/match
- racket/base
- racket/contract/base
- racket/contract/region
- racket/contract/combinator
- racket/flonum
- racket/extflonum
- racket/function
- "target-config.rkt")
+  racket/base
+  racket/contract/base
+  racket/contract/combinator
+  racket/contract/region
+  racket/extflonum
+  racket/flonum
+  racket/function
+  racket/list
+  racket/match
+  racket/serialize
+  racket/set
+  racket/syntax
+  "target-config.rkt")
 
 (provide (all-defined-out))
 
 (define constants (make-hash))
 (define parameters (make-hash))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; NOTE: Utils
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (syntax->string stx)
   (symbol->string (syntax->datum stx)))
@@ -24,6 +32,25 @@
   (for/fold ((str ""))
             (((k v) (in-hash ht)))
              (string-append str (format "~a: ~a\n" k v))))
+
+(define (deepcopy x)
+  (deserialize (serialize x)))
+
+(define (raise-error stx msg)
+  (raise-syntax-error #f msg stx))
+
+(define (atom-number stx)
+  (let ((v (syntax->datum stx)))
+    (match v
+      ((? number?) v)
+      ((? extflonum?) v)
+      ((list 'quote (? number?)) (cadr v))
+      ((list 'quote (? extflonum?)) (cadr v))
+      (else #f))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; NOTE: Structs
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (struct constant
   (value
@@ -53,7 +80,13 @@
          .src-pos)
         #:prefab)
 
-;; NOTE: aka box. Box becomes immutable after passing them as synax-parameters
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; NOTE: types and interfaces
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; NOTE: aka box. Box becomes immutable after passing them as synax-parameters, 
+; which is not what we want. Hash tables do well 
 (define (state/c a) (hash/c fixnum? a))
 
 (define/contract (make-state init-value)  
@@ -67,8 +100,6 @@
 (define/contract (write-state! st value)
                  (-> (state/c any/c) any/c void?)
                  (hash-set! st 0 value))
-
-;; NOTE: types
 
 (define var-symbol/c
   (struct/c var-symbol
@@ -168,6 +199,8 @@
  (define/contract (ndt-get-mapping-sizes ndt df-name dx-name)
    (-> need-derivatives-table/c var-symbol/c string?
        (or/c mapping-sizes/c false/c))
+   (unless (var-symbol/c df-name)
+     (error "181"))
    (cond
      [(ndt-member? ndt df-name)
       (let ((dx-name->dx-sizes (ndt-get-dx-mapping-sizes-ht ndt df-name)))
@@ -178,8 +211,19 @@
      [else #f])))
 
 
-(define base-type/c (one-of/c 'real 'int 'dual-l 'dual-r))
+(define base-type/c (one-of/c 'real 'int 'dual-l 'dual-r 'int-index))
 (define landau-type/c (list/c base-type/c (or/c (list/c integer?) (list/c))))
+(define/contract
+  (get-type-base type)
+  (-> landau-type/c base-type/c)
+  (car type))
+
+(define/contract
+  (get-type-range type)
+  (-> landau-type/c (or/c (list/c integer?) (list/c)))
+  (cadr type)) 
+
+
 ;; FIXME: landau-type/c with unexpanded `size` part
 ; (define type/c (list/c base-type/c any/c))
 (define type/c any/c)
@@ -195,7 +239,8 @@
 (define current-arguments/c (hash/c symbol? argument/c))
 (define need-only-value-set/c (mutable-set/c var-symbol/c))
 (define dx-names-hash-set/c (hash/c string? boolean?))
-;; NOTE: Reference to a array or a func-return-value, variables are mapped to singleton arrays
+;; NOTE: Reference to a array or a func-return-value
+; nonarray variables are mapped to singleton arrays
 (define backrun-ref/c (list/c (or/c 'array-ref 'func-ref) var-symbol/c integer?))
 (define functions-symbols/c (hash/c string? symbol?))
 
@@ -209,7 +254,8 @@
          .need-derivatives-table
          .function-return-value
          (.function-return-type #:mutable)
-         .current-arguments)
+         .current-arguments
+         .self-sufficent-function?)
         #:prefab)
 
 (define func-context/c
@@ -223,7 +269,24 @@
             need-derivatives-table/c
             symbol?
             type/c
-            current-arguments/c))
+            current-arguments/c
+            boolean?))
+
+(define/contract 
+  (func-context-copy ctx)
+  (-> func-context/c func-context/c)
+  (func-context
+    (deepcopy (func-context-.current-variables ctx))
+    (deepcopy (func-context-.function-name ctx))
+    (deepcopy (func-context-.dx-names-hash-set ctx))
+    (deepcopy (func-context-.der-table ctx))
+    (deepcopy (func-context-.real-vars-table ctx))
+    (set-copy (func-context-.need-only-value-set ctx))
+    (deepcopy (func-context-.need-derivatives-table ctx))
+    (deepcopy (func-context-.function-return-value ctx))
+    (deepcopy (func-context-.function-return-type ctx))
+    (deepcopy (func-context-.current-arguments ctx))
+    (deepcopy (func-context-.self-sufficent-function? ctx))))
 
 (struct func-info
     (func-return-symbol
@@ -283,7 +346,89 @@
             need-only-value-set/c
             need-derivatives-table/c))
 
+(struct function-inline-template
+  (.actions-list
+   .parameters
+   .func-vs)
+  #:prefab)
+
+(define function-inline-template/c
+  (struct/c function-inline-template
+            (listof any/c)
+            (listof var-symbol/c)
+            var-symbol/c))
+
+(struct function-inline-semantics-template
+  (.name
+   .body
+   .type
+   .parameters
+   .return-symbol)
+  #:prefab)
+
+(define function-inline-semantics-template/c
+  (struct/c function-inline-semantics-template
+            (syntax/c symbol?)
+            syntax?
+            landau-type/c
+            (listof symbol?)
+            symbol?))
+
+(struct getter-info (type ix-info) #:prefab)
+(define getter-info/c
+  (struct/c
+    getter-info
+    (or/c 'cell 'slice 'var 'array)
+    (or/c (syntax/c any/c) false/c)))
+(define (getter-is-slice? getter-info) (equal? (getter-info-type getter-info) 'slice))
+(define (getter-is-cell? getter-info) (equal? (getter-info-type getter-info) 'cell))
+(define (getter-is-var? getter-info) (equal? (getter-info-type getter-info) 'var))
+(define (getter-is-array? getter-info) (equal? (getter-info-type getter-info) 'array))
+
+
+;; FIXME add array (based on the search-name-backrun results)
+(define/contract
+  (make-getter-info index slice declated-type)
+  (-> (syntax/c any/c) (syntax/c any/c) landau-type/c 
+      getter-info/c)
+  (when (and (syntax->datum index) (syntax->datum slice))
+    (error (format "bug: getter-type: index and slice has non'#f values: ~a ~a" 
+                   (syntax->datum index) 
+                   (syntax->datum slice))))
+  (cond ;; TODO proper getter checks here
+    ;; TODO fix all usage
+    ((syntax->datum index) 
+     (getter-info 'cell index))
+
+    ((syntax->datum slice) 
+     (getter-info 'slice #f))
+
+    ((not (empty? (get-type-range declated-type)))
+     (getter-info 'array #f))
+
+    (else 
+      (getter-info 'var #f)))) 
+
+
+(struct func-arg-binding
+  (.arg-type
+   .ref)
+  #:prefab)
+
+(define func-arg-binding/c
+  (struct/c func-arg-binding
+            (symbols 'var 'array 'cell)
+            backrun-ref/c))
+
+(define (atom-number/c x)
+  (match x
+    ((? number?) #t)
+    ((? extflonum?) #t)
+    (_ #f)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; NOTE: functions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (new-variables-nesting vars)
   (variables (make-hash) vars))
@@ -326,7 +471,7 @@
     ((list 'type (list 'array-type (list 'basic-type basic)
                              "[" size "]"))
      (if (equal? basic "real")
-         #`(list #,(string->symbol basic) #,size)
+         #`(list #,(string->symbol basic) (list #,size))
          (raise-syntax-error #f "int arrays are not supported yet" t)))))
 
 (define (parse-type t)
@@ -350,8 +495,7 @@
   (let ([type (syntax-property stx 'landau-type)])
     (unless
         (equal? 'int type)
-      (raise-syntax-error #f (format "expect 'int, given: ~a. ~a" type annotation) stx)))
-    )
+      (raise-syntax-error #f (format "expect 'int, given: ~a. ~a" type annotation) stx))))
 
 (define (throw-if-not-type expected-type stx [annotation ""])
   (let ([type (syntax-property stx 'landau-type)])
@@ -384,36 +528,112 @@
     (cons "cos"  (list 'real))
     (cons "pow"  (list 'real 'real)))))
 
+(define/contract (to-landau-type stx type-like-anything)
+                   (-> syntax? any/c landau-type/c)
+    (define cant-cast-msg "bug: can't cast ~a to landau-type")
+    (define cant-cast-first-item 
+      "bug: can't cast ~a to landau-type. Can't cast the first item of a pair to the basic-type/c")
+    (define cant-cast-second-item 
+      "bug: can't cast ~a to landau-type. Expanded second item is not atom-number")
+    (match type-like-anything
+      ((? landau-type/c type-like-anything) 
+        type-like-anything)
+      
+
+      ((? syntax? type-like-anything)
+        (to-landau-type stx (syntax->datum type-like-anything)))
+
+
+      ((list 'list base-type (list 'list range-tree))
+       (to-landau-type stx (list base-type (list range-tree))))
+      
+
+      ((list 'list base-type (list 'list))
+       (to-landau-type stx (list base-type (list))))
+
+
+      ((list 'list base-type (list 'quote '()))
+       (to-landau-type stx (list base-type (list))))
+      
+
+      ((list base-type (list))
+       (let* ((base-type (if (syntax? base-type)
+                          (syntax->datum base-type)
+                          base-type)))
+         (unless (base-type/c base-type)
+           (raise-error stx (format cant-cast-first-item 
+                                    type-like-anything)))
+         (list base-type (list))))
+
+
+      ((list base-type (list type-range-tree))
+       (let* ((type-range (if (syntax? type-range-tree) 
+                            type-range-tree
+                            (datum->syntax stx type-range-tree)))
+              (base-type (if (syntax? base-type)
+                           (syntax->datum base-type)
+                           base-type)))
+         (unless (base-type/c base-type)
+           (raise-error stx (format cant-cast-first-item
+                                    type-like-anything)))
+         (if (atom-number type-range)
+           (list base-type (list (atom-number type-range)))
+           (let ((expanded-range-stx (local-expand 
+                                    type-range 'expression '())))
+             (if (atom-number expanded-range-stx)
+               (list base-type (list (atom-number expanded-range-stx)))
+               (raise-error stx (format cant-cast-second-item
+                                        type-like-anything)))))))
+
+
+      (`(,(? base-type/c base-type) ,(? fixnum? type-range-tree))
+       (list base-type (list type-range-tree)))
+      
+
+      ((list base-type type-range-tree)
+       (let* ((type-range (if (syntax? type-range-tree) 
+                            (syntax->datum type-range-tree)
+                            type-range-tree))
+              (base-type (if (syntax? base-type)
+                           (syntax->datum base-type)
+                           base-type)))
+         (unless (base-type/c base-type)
+           (raise-error stx (format cant-cast-first-item
+                                    type-like-anything)))
+         (to-landau-type stx (list base-type type-range))))
+
+
+      (_ (raise-syntax-error #f (format cant-cast-msg type-like-anything) stx))
+      ))
+
 (define/contract
   (add-real-var! name type stx real-vars-table)
   (-> (syntax/c symbol?) type/c (syntax/c any/c) real-vars-table/c
       void?)
-  (let* ((src-pos_ (syntax-position name))
-         (src-pos (if src-pos_ src-pos_ 0))
-         (basic-type (car type))
-         (name-vs (var-symbol
-                   (symbol->string (syntax->datum name))
-                   src-pos))
-         (range (cadr type))
-         (expanded-range (if (equal? range '())
+  (define src-pos_ (syntax-position name))
+  (define src-pos (if src-pos_ src-pos_ 0))
+  (define var-landau-type (to-landau-type stx type))
+  (define basic-type (get-type-base var-landau-type))
+  (define name-vs (var-symbol
+                    (symbol->string (syntax->datum name))
+                    src-pos))
+  (define range (get-type-range var-landau-type))
+  (define expanded-range (if (equal? range '())
                            #f
-                             ;; NOTE: var-size is something like ''5
-                             ;; TODO: refactor to use `expand-type`
-                            (cadr (cadr (syntax->datum (local-expand (datum->syntax stx range) 'expression '())))))))
-        
-        (when (equal? basic-type 'real)
-          (hash-set! real-vars-table
-                     name-vs
-                     expanded-range))))
+                           (car range)))
+  (when (equal? basic-type 'real)
+    (hash-set! real-vars-table
+               name-vs
+               expanded-range)))
 
 
 (define/contract
   (ref-to-key ref)
-  (-> backrun-ref/c df-name/c)
+  #| (-> backrun-ref/c df-name/c) |#
+  (-> any/c df-name/c)
   (match ref
     ((list 'array-ref var-symb idx) (list var-symb idx))
-    ((list 'basic-ref var-symb) var-symb)
-    (else (error "bug: unknown ref"))))
+    (else (error (format "bug: unknown ref type: ~a" ref)))))
 
 
 (define/contract
@@ -433,3 +653,26 @@
   (-> var-symbol? string?
     symbol?)
   (string->symbol (format "d~ad~a_inv_mpg" (var-symbol->string var-symb) dx-name-str)))
+
+;; NOTE: function argument temporaty variable name
+(define/contract
+  (make-norm-arg-name func-name arg-number)
+  (-> string? integer? 
+    string?)
+  (format "norm_arg_~a~a" func-name arg-number))
+
+
+(define/contract (update-current-variables ctx new-curr-var)
+                 (-> func-context/c current-variables/c
+                     func-context/c)
+ (func-context new-curr-var
+               (func-context-.function-name ctx)
+               (func-context-.dx-names-hash-set ctx)
+               (func-context-.der-table ctx)
+               (func-context-.real-vars-table ctx)
+               (func-context-.need-only-value-set ctx)
+               (func-context-.need-derivatives-table ctx)
+               (func-context-.function-return-value ctx)
+               (func-context-.function-return-type ctx)
+               (func-context-.current-arguments ctx)
+               (func-context-.self-sufficent-function? ctx)))
