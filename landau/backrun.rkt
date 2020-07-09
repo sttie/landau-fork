@@ -1,7 +1,6 @@
 #lang racket
 (require (for-syntax racket/base
                      racket/contract
-                     #| macro-debugger/stepper |#
                      racket/fixnum
                      racket/flonum
                      racket/function
@@ -10,18 +9,14 @@
                      racket/pretty
                      racket/set
                      racket/syntax
-                     #| racket/trace |#
                      syntax/location
                      syntax/parse
                      "environment.rkt"
                      (only-in "process-actions-list.rkt" splice-nested)
                      )
          (only-in "process-actions-list.rkt" process!)
-         #| macro-debugger/stepper |#
          "environment.rkt"
          "type-utils.rkt"
-         #| macro-debugger/stepper-text |#
-         #| racket/trace |#
          racket/contract/region
          racket/stxparam
          racket/flonum
@@ -29,11 +24,6 @@
          racket/unsafe/ops
          "common-for-syntax.rkt")
 
-#| (provide |# 
-#|         program expr term factor primary element func constant get-value |#
-#|          var-decl decl-block assignation number if-expr bool-expr bool-term |#
-#|          bool-factor single-term expr-body func-body for-expr der-apply der-annot |#
-#|          discard parameter func-call slice_idx print get-derivative ) |#
 
 (define-syntax-parameter current-variables #f)
 (define-syntax-parameter function-name #f)
@@ -1395,14 +1385,13 @@
     (match ref
       ((list _ vs _) vs))))
 
-
 (begin-for-syntax
-  (define/contract (bind-parameters-to-arguments actions-list bindings)
-                   (-> (listof any/c) (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
+  (define/contract (bind-parameters-to-arguments inlined-function-name actions-list bindings)
+                   (-> string? (listof any/c) (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
                        (listof any/c))
    (define flat-actions-list (reverse (splice-nested actions-list)))
    (define msg-template "bug: not self-sufficent function should not contain ~a term")
-   (define (rebind-ref ref bindings)
+   (define (rebind-ref _inlined-function-name ref bindings)
      (define var-name (match ref ((list _ (var-symbol name _) _) name)))
      (define (is-constant? _name)
        (hash-has-key? constants (string->symbol _name)))
@@ -1415,7 +1404,6 @@
         ;; cell -> override
         ;; array -> preserve 
         (match (hash-ref bindings vs (thunk 'not-a-function-parameter))
-          
 
           ((func-arg-binding 'var (list 'array-ref arg-vs arg-idx))
            (list 'array-ref arg-vs idx))
@@ -1433,35 +1421,32 @@
              ;; NOTE: inlined function's local variables are prepanded with _
              (else (match ref
                   ((list 'array-ref (var-symbol name src-pos) ref-idx)
-                   (list 'array-ref (var-symbol (format "_~a" name) src-pos) ref-idx))))))
-          #| ('function-inner-variable |# 
-          #|  ref) |#
-
+                   (list 'array-ref (var-symbol (make-inlined-variable-name _inlined-function-name name) src-pos) ref-idx))))))
           
           ('constant 'constant)))))
 
-   (define (rebind-refs-list refs-list bindings)
+   (define (rebind-refs-list _inlined-function-name refs-list bindings)
      (filter (lambda (x) (not (equal? x 'constant))) 
              (for/list ((ref (in-list refs-list)))
-               (rebind-ref ref bindings))))
+               (rebind-ref _inlined-function-name ref bindings))))
 
    (for/list ((action (in-list flat-actions-list)))
      (match action
        ((list 'func-assign func-ref refs-list)
         (list 'assign 
-              (rebind-ref func-ref bindings)
-              (rebind-refs-list refs-list bindings)))
+              (rebind-ref inlined-function-name func-ref bindings)
+              (rebind-refs-list inlined-function-name refs-list bindings)))
 
        ((list 'assign l-val-ref refs-list)
-        (list 'assign (rebind-ref l-val-ref bindings)
-              (rebind-refs-list refs-list bindings)))
+        (list 'assign (rebind-ref inlined-function-name l-val-ref bindings)
+              (rebind-refs-list inlined-function-name refs-list bindings)))
 
        ((list 'var-decl vs type)
         (list 'var-decl 
               ;; NOTE: inlined function's local variables are prepanded with _
               (match vs 
                 ((var-symbol name src-pos)
-                 (var-symbol (format "_~a" name) src-pos)))
+                 (var-symbol (make-inlined-variable-name inlined-function-name name) src-pos)))
               type))
 
        ((list 'der-annot ref-1 ref-2)
@@ -1678,6 +1663,7 @@
 
              (define inlined-function 
                (bind-parameters-to-arguments 
+                 func-str 
                  (function-inline-template-.actions-list func-template) 
                  bindings)) 
 
@@ -2185,7 +2171,7 @@
                                    #:defaults ((value #'notset))))
      (let* ((name_ (syntax->datum #'name))
             (type-datum (syntax->datum #'type))
-            (type (parse-type type-datum))
+            (type (to-landau-type stx (parse-type type-datum)))
             (name-vs (var-symbol (symbol->string name_) (syntax-position #'name))))
        (check-duplicate-variable-name name_ #'name)
        (add-variable! (syntax-parameter-value #'current-variables) #'name type)

@@ -659,10 +659,10 @@
 
 
 (begin-for-syntax
-  (define/contract (bind-parameters-to-arguments template bindings)
-                   (-> syntax? (hash/c symbol? (or/c symbol? atom-number/c))
+  (define/contract (bind-parameters-to-arguments inlined-function-name template bindings)
+                   (-> string? syntax? (hash/c symbol? (or/c symbol? atom-number/c))
                        syntax?)
-    (define (rebind-name _bindings _name)
+    (define (rebind-name _inlined-function-name _bindings _name)
       (define new-binding 
         (hash-ref _bindings 
                   (syntax->datum _name)
@@ -675,7 +675,7 @@
         (#f (cond 
               ((hash-has-key? constants (syntax->datum _name)) _name)
               (else (format-id _name
-                               "_~a" _name 
+                               INLINE-VARIABLE-FORMAT _inlined-function-name _name 
                                #:source _name #:props _name))))
         ((? atom-number/c new-binding) new-binding)
         (_ (with-syntax ((new-binding-stx new-binding))
@@ -684,7 +684,7 @@
     (define inlined-function 
       (syntax-parse template
         (get-value:get-value-cls
-          (let ((new-binding (rebind-name bindings #'get-value.name)))
+          (let ((new-binding (rebind-name inlined-function-name bindings #'get-value.name)))
             (datum->syntax 
               template
               ;; NOTE: if new-binding is a number then get-value is transformed to
@@ -729,7 +729,7 @@
                          ("-=" "-")
                          ("*=" "*")
                          ("/=" "/"))))
-           (with-syntax ((new-name (rebind-name bindings #'name)))
+           (with-syntax ((new-name (rebind-name inlined-function-name bindings #'name)))
              (match op_
              ((or "+=" "-=")
               (datum->syntax template 
@@ -742,7 +742,7 @@
                                                      (element 
                                                        (get-value ,#'new-name ,@getter-for-splice))))))
                                              ,binop 
-                                             ,(bind-parameters-to-arguments #'value bindings)))))
+                                             ,(bind-parameters-to-arguments inlined-function-name #'value bindings)))))
              ((or "*=" "/=")
               (datum->syntax template 
                              `(assignation ,#'new-name ,@getter-for-splice "="
@@ -754,20 +754,20 @@
                                                      (element 
                                                        (get-value ,#'new-name ,@getter-for-splice)))))
                                                ,binop
-                                               ,(bind-parameters-to-arguments #'value bindings))))))))))
+                                               ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))))))))
 
     
         (((~literal assignation) name:id 
                              getter:getter-cls
                              "=" value:expr)
          (let ((getter-for-splice (syntax-e #'getter)))
-           (with-syntax ((new-name (rebind-name bindings #'name)))
+           (with-syntax ((new-name (rebind-name inlined-function-name bindings #'name)))
              (datum->syntax template 
                           ;; NOTE: assignation to parameters is prohibited.
                           ; Left-hand side name is either function name or function local variable.
                           ; It should be renamed.
                         `(assignation ,#'new-name ,@getter-for-splice
-                                      "=" ,(bind-parameters-to-arguments #'value bindings))))))
+                                      "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))))
         (((~literal der-annot) _ "'" _ "=" _)
          (raise-syntax-error #f "Function with derivatives annotation was called from
                                  the main function. This feature is not implemented yet." template))
@@ -788,21 +788,22 @@
                               (array-type 
                                 ,#'basic-type "[" ,#'num "]"))
                             ;; NOTE: inlined function's local variables are prepanded with _
-                            ,(format-id #'name "_~a" #'name #:source #'name #:props #'name) 
-                            "=" ,(bind-parameters-to-arguments #'value bindings))))
+                            ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name) 
+                            "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))
 
         (({~literal var-decl} type:expr name:id)
-         (datum->syntax template `(var-decl ,#'type ,(format-id #'name "_~a" #'name #:source #'name #:props #'name))))
+         (datum->syntax template `(var-decl ,#'type
+                                            ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name))))
 
         (({~literal var-decl} type:expr name:id "=" value:expr)
-         (datum->syntax template `(var-decl ,#'type ,(format-id #'name "_~a" #'name #:source #'name #:props #'name) 
-                                            "=" ,(bind-parameters-to-arguments #'value bindings))))
+         (datum->syntax template `(var-decl ,#'type ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name) 
+                                            "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))
 
         (((~literal par) expr)
-         (datum->syntax template `(par ,(bind-parameters-to-arguments #'expr bindings))))
+         (datum->syntax template `(par ,(bind-parameters-to-arguments inlined-function-name #'expr bindings))))
 
         (((~literal other-par) "," expr)
-         (datum->syntax template `(other-par "," ,(bind-parameters-to-arguments #'expr bindings))))
+         (datum->syntax template `(other-par "," ,(bind-parameters-to-arguments inlined-function-name #'expr bindings))))
 
         (((~literal func-call) function-name "(" ({~literal parlist} par*:par-spec ...) ")")
          (begin
@@ -811,7 +812,7 @@
                         `(func-call 
                            ,#'function-name 
                            "(" 
-                           (parlist ,@(bind-parameters-to-arguments #'(par* ...) bindings))
+                           (parlist ,@(bind-parameters-to-arguments inlined-function-name #'(par* ...) bindings))
                            ")"))))
      
         (((~literal func-body) . children-pat)
@@ -821,7 +822,7 @@
          (with-syntax 
            ((binded-stx 
               (for/list ((child (in-list (syntax-e #'children-pat))))
-                (bind-parameters-to-arguments child bindings)))) 
+                (bind-parameters-to-arguments inlined-function-name child bindings)))) 
            #`(expr-body #,@#'binded-stx)))
 
         ((parent-pat . children-pat)
@@ -830,8 +831,8 @@
            (with-syntax 
            ((binded-stx 
               (for/list ((child (in-list (syntax-e #'children-pat))))
-                (bind-parameters-to-arguments child bindings)))) 
-           #`(#,(bind-parameters-to-arguments #'parent-pat bindings) #,@#'binded-stx))))
+                (bind-parameters-to-arguments inlined-function-name child bindings)))) 
+           #`(#,(bind-parameters-to-arguments inlined-function-name #'parent-pat bindings) #,@#'binded-stx))))
 
         (x #'x)))
     inlined-function))
@@ -1050,6 +1051,7 @@
                (displayln bindings)
 
                (define inlined-function (bind-parameters-to-arguments 
+                                          func-str
                                           (function-inline-semantics-template-.body func-template)
                                           bindings))
 
@@ -1585,6 +1587,7 @@
             (func-name-vs (var-symbol func-name-str fake-src-pos))
             (func-return-type (func-context-.function-return-type ctx))
             (grouped-keys-table (group-by-names (hash-keys (func-context-.der-table ctx)))))
+       (displayln "foo")
        (displayln (func-context-.function-name ctx))
       ;  (displayln (hash->string (func-context-.der-table ctx)))
        (with-syntax*
@@ -1707,8 +1710,7 @@
       type:expr name:id (~optional (~seq "=" value:expr)
                                    #:defaults ((value #'notset))))
      (let* ((name_ (syntax->datum #'name))
-            (type (parse-type (syntax->datum #'type)))
-            (type-stx (datum->syntax stx type))
+            (type (to-landau-type stx (parse-type (syntax->datum #'type))))
             (name-str (symbol->string name_))
             (src-pos (syntax-position #'name))
             (name-vs (var-symbol name-str (if src-pos
@@ -1963,12 +1965,6 @@
             ((dx-name-str-in-current-al) (syntax-parameter-value #'dx-name-in-current-al))
             ((ctx) (syntax-parameter-value #'func-context))
             ((idx) (local-expand #'get-value.index 'expression '()))
-            #| ((i) (displayln (format "name: ~a function-local-variable: ~a" |#
-            #|                         #'name |#
-            #|                         (syntax-property #'name 'function-local-variable)))) |#
-            ((i) (displayln (if ctx 
-                              (func-context-.function-name ctx)
-                              "no-ctx")))
             ((value type name-is-dx src-pos)
              (search-name stx ctx name-symb #'name dx-name-str-in-current-al get-name-mode-on idx))
 
@@ -2681,7 +2677,8 @@
                       (with-syntax*
                         ((dual-b-value #'value-exp-value-part)
                          (assertion-loops-list
-                          (make-der-assignation-loops-list stx ctx name-vs dx-names #'value #'al-index-symb)))
+                          (make-der-assignation-loops-list stx ctx name-vs dx-names #'value #'al-index-symb)
+                          ))
                         (datum->syntax stx
                                        `(expr-body
                                           (_begin ,@#'funcs-ret-assign)
@@ -2690,7 +2687,8 @@
                    ('real
                     (with-syntax
                       ((set-all-derivatives-to-zero
-                        (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)))
+                        (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)
+                        ))
                       (datum->syntax stx
                                      `(expr-body
                                         (_begin ,@#'funcs-ret-assign)
@@ -2699,7 +2697,8 @@
                    ('int
                     (with-syntax
                       ((set-all-derivatives-to-zero
-                        (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)))
+                        (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)
+                        ))
                       (datum->syntax stx
                                      `(expr-body
                                         (_begin ,@#'funcs-ret-assign)
@@ -2785,7 +2784,7 @@
                      (list 'slice "<-" (list 'real _))
                      (list 'cell  "<-" 'real))
                  (with-syntax
-                   ((set-all-derivatives-to-zero
+                   ((set-all-derivatives-to-zero 
                      (make-set-all-derivatives-to-zero/array stx
                                                              ctx
                                                              name-vs
@@ -2793,7 +2792,8 @@
                                                              left-hand-getter-info
                                                              #'slice-range
                                                              #'index-start-expanded_
-                                                             #'index-exp)))
+                                                             #'index-exp)
+                     ))
                    (if (getter-is-slice? left-hand-getter-info)
                      (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
                        (datum->syntax stx
@@ -2813,14 +2813,15 @@
                      (list 'cell  "<-" 'int))
                  (with-syntax
                    ((set-all-derivatives-to-zero
-                     (make-set-all-derivatives-to-zero/array stx
+                     (make-set-all-derivatives-to-zero/array stx 
                                                              ctx
                                                              name-vs
                                                              #'al-index-symb
                                                              left-hand-getter-info
                                                              #'slice-range
                                                              #'index-start-expanded_
-                                                             #'index-exp)))
+                                                             #'index-exp)
+                     ))
                    (if (getter-is-slice? left-hand-getter-info)
                      (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
                        (datum->syntax stx

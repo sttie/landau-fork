@@ -677,3 +677,9 @@
                (func-context-.function-return-type ctx)
                (func-context-.current-arguments ctx)
                (func-context-.self-sufficent-function? ctx)))
+
+(define INLINE-VARIABLE-FORMAT "_inl_~a_~a")
+
+(define (make-inlined-variable-name inlined-function-name local-variable-name)
+  (format INLINE-VARIABLE-FORMAT inlined-function-name local-variable-name))
+
