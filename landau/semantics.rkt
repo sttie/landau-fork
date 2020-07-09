@@ -667,13 +667,16 @@
         (hash-ref _bindings 
                   (syntax->datum _name)
                   #f))
+      (displayln (format "rebind-name: ~a -> ~a" _name new-binding))
       (match new-binding
         ;; NOTE: if there is no such name in bindings, then
-        ; the name is a local variable's name and it should be
-        ; prepanded with _
-        (#f (format-id _name
-                       "_~a" _name 
-                       #:source _name #:props _name))
+        ; the name is either a constant or a local variable's name and it should be
+        ; prepanded with _ 
+        (#f (cond 
+              ((hash-has-key? constants (syntax->datum _name)) _name)
+              (else (format-id _name
+                               "_~a" _name 
+                               #:source _name #:props _name))))
         ((? atom-number/c new-binding) new-binding)
         (_ (with-syntax ((new-binding-stx new-binding))
              (syntax-track-origin (syntax/loc _name new-binding-stx) _name #'expr)))))
@@ -726,27 +729,32 @@
                          ("-=" "-")
                          ("*=" "*")
                          ("/=" "/"))))
-           (match op_
+           (with-syntax ((new-name (rebind-name bindings #'name)))
+             (match op_
              ((or "+=" "-=")
               (datum->syntax template 
-                             `(assignation ,#'name ,@getter-for-splice "="
+                             `(assignation ,#'new-name ,@getter-for-splice "="
                                            (expr
                                              (expr 
                                                (term 
                                                  (factor 
                                                    (primary 
                                                      (element 
-                                                       (get-value ,#'name ,@getter-for-splice)))))) ,binop ,#'value))))
+                                                       (get-value ,#'new-name ,@getter-for-splice))))))
+                                             ,binop 
+                                             ,(bind-parameters-to-arguments #'value bindings)))))
              ((or "*=" "/=")
               (datum->syntax template 
-                             `(assignation ,#'name ,@getter-for-splice "="
+                             `(assignation ,#'new-name ,@getter-for-splice "="
                                            (expr
                                              (term
                                                (term 
                                                  (factor 
                                                    (primary 
                                                      (element 
-                                                       (get-value ,#'name ,@getter-for-splice))))) ,binop ,#'value))))))))
+                                                       (get-value ,#'new-name ,@getter-for-splice)))))
+                                               ,binop
+                                               ,(bind-parameters-to-arguments #'value bindings))))))))))
 
     
         (((~literal assignation) name:id 
@@ -790,6 +798,22 @@
          (datum->syntax template `(var-decl ,#'type ,(format-id #'name "_~a" #'name #:source #'name #:props #'name) 
                                             "=" ,(bind-parameters-to-arguments #'value bindings))))
 
+        (((~literal par) expr)
+         (datum->syntax template `(par ,(bind-parameters-to-arguments #'expr bindings))))
+
+        (((~literal other-par) "," expr)
+         (datum->syntax template `(other-par "," ,(bind-parameters-to-arguments #'expr bindings))))
+
+        (((~literal func-call) function-name "(" ({~literal parlist} par*:par-spec ...) ")")
+         (begin
+           (displayln (format "func-call: ~a args: ~a" #'function-name #'(list par* ...)))
+           (datum->syntax template 
+                        `(func-call 
+                           ,#'function-name 
+                           "(" 
+                           (parlist ,@(bind-parameters-to-arguments #'(par* ...) bindings))
+                           ")"))))
+     
         (((~literal func-body) . children-pat)
          ;; NOTE: func-body is inlined and should be in the caller namespace 
          ;; expr-body introduce the new scope layer, so function local variables
@@ -801,11 +825,13 @@
            #`(expr-body #,@#'binded-stx)))
 
         ((parent-pat . children-pat)
-         (with-syntax 
+         (begin
+           (displayln (format "parent-pat: ~a children-pat: ~a" #'parent-pat #'children-pat))
+           (with-syntax 
            ((binded-stx 
               (for/list ((child (in-list (syntax-e #'children-pat))))
                 (bind-parameters-to-arguments child bindings)))) 
-           #`(parent-pat #,@#'binded-stx)))
+           #`(#,(bind-parameters-to-arguments #'parent-pat bindings) #,@#'binded-stx))))
 
         (x #'x)))
     inlined-function))
@@ -944,7 +970,6 @@
              #|  (func-context-.current-variables (syntax-parameter-value #'func-context)) |#
              #|  (func-context-.current-arguments (syntax-parameter-value #'func-context))) |#
              ;; TODO pass the function-name in inlined-function-list to use its syntax-position
-             (displayln (format "function-name: ~a src-pos: ~a" #'function-name (syntax-position #'function-name)))
              (with-syntax* 
                ((typecheck-nonsense #'(error "Bug: typecheck-nonsense in runtime"))
                 (function-return-variable (format-id 
@@ -1027,6 +1052,8 @@
                (define inlined-function (bind-parameters-to-arguments 
                                           (function-inline-semantics-template-.body func-template)
                                           bindings))
+
+               (displayln "inlined-function")
                (pretty-print (syntax->datum inlined-function))
 
                ;; NOTE: Update pairs-list. It is processed in assignation macro
@@ -1913,7 +1940,9 @@
                     not-dx-name
                     fake-src-pos))
                   (else
-                   (raise-syntax-error #f "name not found" name-stx)))))))))))))
+                   (begin
+                     (pretty-print (func-context-.current-variables ctx))
+                     (raise-syntax-error #f "name not found" name-stx))))))))))))))
 
 (define-syntax (get-value stx)
   (syntax-parse stx
@@ -1937,6 +1966,9 @@
             #| ((i) (displayln (format "name: ~a function-local-variable: ~a" |#
             #|                         #'name |#
             #|                         (syntax-property #'name 'function-local-variable)))) |#
+            ((i) (displayln (if ctx 
+                              (func-context-.function-name ctx)
+                              "no-ctx")))
             ((value type name-is-dx src-pos)
              (search-name stx ctx name-symb #'name dx-name-str-in-current-al get-name-mode-on idx))
 
@@ -3376,7 +3408,7 @@
                         (with-syntax* 
                             ((dx-slice-idx (datum->syntax stx dx-slice-idx-name-GLOBAL))
                              (slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
-                             (value-slice-range #`(fxquotient #,#'func-slice-range #,#'dx-slice-range))
+                             (value-slice-range (datum->syntax stx `(_int/ ,#'func-slice-range ,#'dx-slice-range)))
                              (dx-period (check-result
                                          stx
                                          (format "bug3: get-der-variable-dx-range retured #f for (~a, ~a)" 

@@ -169,21 +169,21 @@
       #f))
 
 (define-for-syntax (get-slice-range type)
-  (if (is-slice? type)
-      (cadr type)
-      #f))
+  (match type
+    ((list base (list rng)) rng)
+    (base #f)))
 
 (define-for-syntax (get-slice-type type)
-  (if (is-slice? type)
-      (car type)
-      #f))
+  (match type
+    ((list base _) base)
+    (base #f)))
 
 (define-for-syntax (is-slice-of-type basic-type type)
   (and (is-slice? type) (equal? (get-slice-type type) basic-type)))
 
 (define-for-syntax (landau-type base-type (slice-range #f))
   (if slice-range
-      (list base-type slice-range)
+      (list base-type (list slice-range))
       base-type))
 
 (define-for-syntax (check-result stx err-str func-res)
@@ -192,6 +192,7 @@
       (raise-syntax-error #f err-str stx)))
 
 (define-for-syntax (binary-op-cast op1 op2 stx) (binary-op-cast-helper op1 op2 stx))
+
 
 (define-for-syntax (binary-op-cast-helper op1 op2 stx)
   (let ((type1 (syntax-property op1 'landau-type))
@@ -289,6 +290,7 @@
       (else
        (begin
         (raise-syntax-error #f (format "cannot cast ~v and ~v" type1 type2) stx))))))
+
 
 (define-for-syntax (xor e1 e2)
   (let ((b1 (not (not e1)))

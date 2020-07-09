@@ -355,7 +355,7 @@
 (define function-inline-template/c
   (struct/c function-inline-template
             (listof any/c)
-            (listof var-symbol/c)
+            (listof (list/c var-symbol/c landau-type/c))
             var-symbol/c))
 
 (struct function-inline-semantics-template
@@ -386,7 +386,6 @@
 (define (getter-is-array? getter-info) (equal? (getter-info-type getter-info) 'array))
 
 
-;; FIXME add array (based on the search-name-backrun results)
 (define/contract
   (make-getter-info index slice declated-type)
   (-> (syntax/c any/c) (syntax/c any/c) landau-type/c 
@@ -529,7 +528,7 @@
     (cons "pow"  (list 'real 'real)))))
 
 (define/contract (to-landau-type stx type-like-anything)
-                   (-> syntax? any/c landau-type/c)
+    (-> syntax? any/c landau-type/c)
     (define cant-cast-msg "bug: can't cast ~a to landau-type")
     (define cant-cast-first-item 
       "bug: can't cast ~a to landau-type. Can't cast the first item of a pair to the basic-type/c")
@@ -555,6 +554,8 @@
       ((list 'list base-type (list 'quote '()))
        (to-landau-type stx (list base-type (list))))
       
+      ((? base-type/c type-like-anything)
+       (list type-like-anything (list)))
 
       ((list base-type (list))
        (let* ((base-type (if (syntax? base-type)

@@ -1,26 +1,39 @@
 #lang racket
 (require (for-syntax racket/base
-                     syntax/parse
-                     racket/pretty
-                     syntax/location
-                     racket/syntax
-                     "environment.rkt"
+                     racket/contract
+                     #| macro-debugger/stepper |#
+                     racket/fixnum
                      racket/flonum
                      racket/function
-                     racket/fixnum
-                     racket/match
-                     racket/set
                      racket/list
-                     racket/contract
-                     (only-in "process-actions-list.rkt" splice-nested))
+                     racket/match
+                     racket/pretty
+                     racket/set
+                     racket/syntax
+                     #| racket/trace |#
+                     syntax/location
+                     syntax/parse
+                     "environment.rkt"
+                     (only-in "process-actions-list.rkt" splice-nested)
+                     )
          (only-in "process-actions-list.rkt" process!)
+         #| macro-debugger/stepper |#
          "environment.rkt"
          "type-utils.rkt"
+         #| macro-debugger/stepper-text |#
+         #| racket/trace |#
          racket/contract/region
          racket/stxparam
          racket/flonum
          racket/fixnum
+         racket/unsafe/ops
          "common-for-syntax.rkt")
+
+#| (provide |# 
+#|         program expr term factor primary element func constant get-value |#
+#|          var-decl decl-block assignation number if-expr bool-expr bool-term |#
+#|          bool-factor single-term expr-body func-body for-expr der-apply der-annot |#
+#|          discard parameter func-call slice_idx print get-derivative ) |#
 
 (define-syntax-parameter current-variables #f)
 (define-syntax-parameter function-name #f)
@@ -64,6 +77,7 @@
         ;; NOTE: Racket generates some inner defined functions during the macro expansion.
         ;; They should be defined in the local namespace.
         (eval '(require (rename-in racket/private/list (reverse alt-reverse))) ns)
+        (eval '(require racket/unsafe/ops) ns)
         (eval '(define (check-range a b step)
                  (unless (real? a) (raise-argument-error 'in-range "real?" a))
                  (unless (real? b) (raise-argument-error 'in-range "real?" b))
@@ -88,6 +102,20 @@
   (match (syntax->datum stx)
     ((list 'func _ ...) #t)
     (_ #f)))
+
+(begin-for-syntax
+  (define/contract
+   (range-casting-check stx r-value-type lvalue-outer-prod-range)
+   (-> syntax? (list/c base-type/c (list/c (or/c syntax? fixnum?))) (or/c syntax? fixnum?)
+       syntax?)
+   (when (is-slice? r-value-type)
+     (with-syntax ((rvalue-slice-range (get-slice-range r-value-type)))
+       #`(unless (fx= #,lvalue-outer-prod-range #,#'rvalue-slice-range)
+           (raise-syntax-error
+             #f 
+             (format 
+               "can not cast right-hand side range ~v to the left-hand side range ~v" 
+               #,#'rvalue-slice-range #,lvalue-outer-prod-range) #'#,stx))))))
 
 
 (define-syntax (program stx)
@@ -115,20 +143,18 @@
                                                 (syntax->datum (caddr (syntax-e fnc)))))
                                     (dx-names-set-val (make-hash))
                                     (real-vars-table-val (make-hash)))
-                                ;; FIXME module-funcs-table is always empty. 
                                 #`(syntax-parameterize 
                                     ((dx-names-set '#,dx-names-set-val)
                                      (real-vars-table '#,real-vars-table-val)
                                      (module-funcs-table-parameter '#,module-funcs-table))
-                                                       (cons (var-symbol #,fnc-name #,fake-src-pos)
-                                                             (call-with-values
-                                                               (thunk 
-                                                                 (process!
-                                                                   #,fnc
-                                                                   #,dx-names-set-val 
-                                                                   #,real-vars-table-val))
-                                                               list))))))))))
-       )]))
+                                    (cons (var-symbol #,fnc-name #,fake-src-pos)
+                                          (call-with-values
+                                            (thunk 
+                                              (process!
+                                                #,fnc
+                                                #,dx-names-set-val 
+                                                #,real-vars-table-val))
+                                            list)))))))))))]))
            
 (define (throw-if-bundle-mistype bundl-1 bundl-2)
   (unless (equal? (car bundl-1) (car bundl-2))
@@ -170,7 +196,7 @@
   (define-syntax-class arg-spec
     #:attributes (name type)
     (pattern
-     ({~literal argument} type:type-spec name:id))
+     (_ type:type-spec name:id))
      
     (pattern
      ({~literal other-argument} "," type:type-spec name:id))))
@@ -199,7 +225,6 @@
                                      (match name-type-pair
                                        ((list name-str type)
                                         (begin
-                                          (displayln type)
                                           (quasisyntax/loc
                                             stx
                                             (list 'var-decl 
@@ -215,11 +240,17 @@
                                 (local-expand
                                  (datum->syntax stx (syntax->datum (caddr arg-type))) 'expression '()))))
                              (cons arg-base-type arg-range-expanded))))
-            (func-parameters-vs
-             (for/list ((argname (in-list (syntax-e #'(arg*.name ...)))))
-               (var-symbol 
-                 (symbol->string (syntax->datum argname))
-                 fake-src-pos))) ;; NOTE: use fake-src-pos because parameters always have unique names inside single function
+            (func-parameters-info
+             (for/list ((argname (in-list (syntax-e #'(arg*.name ...))))
+                        (parsed-arg (in-list func-args)))
+               (match parsed-arg
+                 ((list _ argtype)
+                  (list 
+                    (var-symbol 
+                      (symbol->string (syntax->datum argname))
+                      ;; NOTE: use fake-src-pos because parameters always have unique names inside a single function
+                      fake-src-pos)
+                    (to-landau-type stx argtype))))))
 
             (func-return-vs (var-symbol func-name-str fake-src-pos)))
 
@@ -254,7 +285,7 @@
           (syntax-parameter-value #'module-funcs-table-parameter) 
           (syntax->datum #'name)
           (function-inline-template func-body-evaluated
-                                    func-parameters-vs
+                                    func-parameters-info
                                     func-return-vs))
 
         (quasisyntax/loc 
@@ -360,90 +391,96 @@
                                 'expression '())
                               #f)))
          ;;FIXME pass getter-info as syntax property?
-  
+         (displayln "FIXME: check getter in get-value") 
+         (displayln (format "~a get-value: name: ~a ~a" (syntax-line #'name) name-str (syntax->datum stx)))
       ;; FIXME Do not fail array get-value without index of slice. Array can be passed to a function: f(arr)
        #| (check-proper-getter |# 
        #|  (if (attribute index) #'index #'#f) (attribute slice-colon) array-range index-expanded name-str stx) |#
        #| (displayln "full-type:") |#
        #| (displayln (expand-type (datum->syntax stx full-type))) |#
-       (with-syntax-property 'getter-info getter 
-         (with-syntax ((value value)
-                       (name-symb (var-symbol (symbol->string name_) src-pos)))
-         
-          (let*-values 
-             (((index-start-stx slice-range index-range-checks)
-               (if slice-colon_
-                 (slice-helper stx #'index-start #'index-end array-range)
-                 (values #f #f #f)))
-              ((result)
-               (match (list (getter-info-type getter) base-type)
+       (with-syntax-property 
+         'full-type (to-landau-type stx full-type)
+         (with-syntax-property 
+           'get-value-name name_
+           (with-syntax-property 
+             'getter-info getter 
+             (with-syntax ((value value)
+                           (name-symb (var-symbol (symbol->string name_) src-pos)))
+               (let*-values 
+                 (((index-start-stx slice-range index-range-checks)
+                   (if slice-colon_
+                     (slice-helper stx #'index-start #'index-end array-range)
+                     (values #f #f #f)))
+                  ((result)
+                   (match (list (getter-info-type getter) base-type)
+                     ((list 'var 'real)
+                      (if const?
+                        (is-real (syntax/loc stx (list)))
+                        (is-real (syntax/loc stx (list (list 'array-ref name-symb 0))))))
 
-                 ((list 'var 'real)
-                  (if const?
-                    (is-real (syntax/loc stx (list)))
-                    (is-real (syntax/loc stx (list (list 'array-ref name-symb 0))))))
+                     ((list 'array 'real)
+                      (with-syntax-property 
+                        'landau-type (to-landau-type stx full-type)
+                        (if const?
+                          (syntax/loc stx (list))
+                          ;; NOTE: idx do not make sense and should not be used. Use -1 to indicate this. 
+                          (syntax/loc stx (list (list 'array-ref name-symb -1))))))
 
-                 ((list 'array 'real)
-                  (if const?
-                    (is-real (syntax/loc stx (list)))
-                    ;; NOTE: idx do not make sense and should not be used. Use -1 to indicate this. 
-                    (is-real (syntax/loc stx (list (list 'array-ref name-symb -1))))))
-                 
-                 ((list 'cell 'real)
-                  (with-syntax* ((index-expanded-stx index-expanded)
-                                 (expanded-range array-range)
-                                 (range-check-stx (range-check-stx stx #'index-expanded-stx #'expanded-range)))
+                     ((list 'cell 'real)
+                      (with-syntax* ((index-expanded-stx index-expanded)
+                                     (expanded-range array-range)
+                                     (range-check-stx (range-check-stx stx #'index-expanded-stx #'expanded-range)))
 
-                                ;; NOTE: (cadr (cadr ... because expanded looks like that: '(#%app '4)
-                                ;; NOTE: can't do check in transmormer phase because loop variable is not resolved by that time.
-                                ;;       Need to insert check-bounds code in generated code
-                                (throw-if-not-type 'int-index #'index-expanded-stx 
-                                                   "Indexes expected to be expressions with 'int constants and/or loop variables")
-                                (begin
-                                  (is-real
-                                    (if const?
-                                      (quasisyntax/loc
-                                        stx
-                                        (begin
-                                          range-check-stx
-                                          (list)))
+                                    ;; NOTE: (cadr (cadr ... because expanded looks like that: '(#%app '4)
+                                    ;; NOTE: can't do check in transmormer phase because loop variable is not resolved by that time.
+                                    ;;       Need to insert check-bounds code in generated code
+                                    (throw-if-not-type 'int-index #'index-expanded-stx 
+                                                       "Indexes expected to be expressions with 'int constants and/or loop variables")
+                                    (begin
+                                      (is-real
+                                        (if const?
+                                          (quasisyntax/loc
+                                            stx
+                                            (begin
+                                              range-check-stx
+                                              (list)))
 
-                                      (quasisyntax/loc
-                                        stx
-                                        (begin
-                                          range-check-stx ;; TODO: add src-loc
-                                          (list (list 'array-ref #,#'name-symb #,#'index-expanded-stx))
-                                          (list (list 'array-ref #,#'name-symb #,#'index-expanded-stx)))))))))
+                                          (quasisyntax/loc
+                                            stx
+                                            (begin
+                                              range-check-stx ;; TODO: add src-loc
+                                              (list (list 'array-ref #,#'name-symb #,#'index-expanded-stx))
+                                              (list (list 'array-ref #,#'name-symb #,#'index-expanded-stx)))))))))
 
-                 ((list 'slice 'real)
-                  (with-syntax*
-                    ((slice-range-stx slice-range)
-                     (index-range-checks-stx index-range-checks)
-                     (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
-                     (full-idx #`(+ #,index-start-stx slice-idx-synt)))
-                    (is-type_ (landau-type 'real #'slice-range-stx)
-                              (if const?
-                                (quasisyntax/loc
-                                  stx
-                                  (begin
-                                    #,#'index-range-checks-stx
-                                    (list)))
-                                (quasisyntax/loc
-                                  stx
-                                  (begin
-                                    #,#'index-range-checks-stx
-                                    (list (list 'array-ref name-symb full-idx))))))))
+                     ((list 'slice 'real)
+                      (with-syntax*
+                        ((slice-range-stx slice-range)
+                         (index-range-checks-stx index-range-checks)
+                         (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
+                         (full-idx #`(+ #,index-start-stx slice-idx-synt)))
+                        (is-type_ (landau-type 'real #'slice-range-stx)
+                                  (if const?
+                                    (quasisyntax/loc
+                                      stx
+                                      (begin
+                                        #,#'index-range-checks-stx
+                                        (list)))
+                                    (quasisyntax/loc
+                                      stx
+                                      (begin
+                                        #,#'index-range-checks-stx
+                                        (list (list 'array-ref name-symb full-idx))))))))
 
-                 ((list 'var 'int)
-                  (is-int (syntax/loc stx '())))
+                     ((list 'var 'int)
+                      (is-int (syntax/loc stx '())))
 
-                 ((list (or 'cell 'slice) (or 'int 'int-index))
-                  (raise-syntax-error stx "int arrays are not supported yet" #'name-symb))
+                     ((list (or 'cell 'slice) (or 'int 'int-index))
+                      (raise-syntax-error stx "int arrays are not supported yet" #'name-symb))
 
-                 ((list 'var 'int-index)
-                  (is-int-index (syntax/loc stx value))))
-               ))
-           result)))))))
+                     ((list 'var 'int-index)
+                      (is-int-index (syntax/loc stx value))))
+                   ))
+                 result)))))))))
 
 (define-for-syntax (range-check stx idx range)
   (begin
@@ -509,7 +546,6 @@
                                       (raise-syntax-error
                                         #f
                                         (format "the right-hand side is slice, but the left-hand one is not") stx))))
-       ;  (println "der-apply")
        (check-proper-getter (if (attribute func-ret-idx) #'func-ret-idx #'#f) 
                             (attribute func-slice-colon) 
                             expanded-range 
@@ -587,6 +623,7 @@
                              (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                              (rvalue-outer-prod-range #'value-slice-range)
                              (r-value-type value-type))
+                            (displayln (format "slice <- value / var: ~a" ) )
                             (quasisyntax/loc
                               stx
                               (begin
@@ -750,13 +787,13 @@
                       (dx-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'dx-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'dx-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (for/list ((#,#'dx-slice-idx-synt (in-range 0 #,#'dx-slice-range)))
                          (list 'discard
                                (list 'array-ref #,#'df-name-symb #,#'df-idx-expanded)
@@ -779,13 +816,13 @@
                       (df-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'df-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (for/list ((#,#'df-slice-idx-synt (in-range 0 #,#'df-slice-range)))
                          (list 'discard
                                (list 'array-ref #,#'df-name-symb #,#'full-idx)
@@ -805,14 +842,14 @@
                       (df-full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (dx-full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'(* df-slice-range dx-slice-range))
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'df-index-range-checks
                        #,#'dx-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (for/list ((#,#'df-slice-idx-synt (in-range 0 #,#'df-slice-range)))
                          (for/list ((#,#'dx-slice-idx-synt (in-range 0 #,#'dx-slice-range)))
                            (list 'discard
@@ -823,14 +860,15 @@
                      ((df-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                     (define r-value-type (syntax-property #'r-value-exp 'landau-type))
+
                    ;(displayln (format "full-idx ~a\nlvalue-outer-prod-range ~a\nr-value-exp ~a\nr-value-type ~a" #'full-idx #'lvalue-outer-prod-range #'r-value-exp #'r-value-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'df-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (for/list ((#,#'df-slice-idx-synt (in-range 0 #,#'df-slice-range)))
                          (list 'discard
                                (list 'array-ref #,#'df-name-symb #,#'full-idx)
@@ -840,13 +878,13 @@
                      ((dx-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'dx-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'dx-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (for/list ((#,#'dx-slice-idx-synt (in-range 0 #,#'dx-slice-range)))
                          (list 'discard
                                (list 'array-ref #,#'df-name-symb 0)
@@ -884,44 +922,49 @@
 
 (define-for-syntax (slice-helper stx dx-index-start dx-index-end expanded-range-dx)
   (let*-values
-      (((dx-index-start-stx dx-index-start-number) (get-expanded-slice-index-start dx-index-start))
-       ((dx-index-end-stx dx-index-end-number) (get-expanded-slice-index-end stx dx-index-end expanded-range-dx)))
+    (((dx-index-start-stx dx-index-start-number) (get-expanded-slice-index-start dx-index-start))
+     ((dx-index-end-stx dx-index-end-number) (get-expanded-slice-index-end stx dx-index-end expanded-range-dx)))
+
+    (throw-if-not-type 'int-index 
+                       dx-index-start-stx 
+                       "Indexes expected to be expressions with 'int constants and/or loop variables")
+    (throw-if-not-type 'int-index 
+                       dx-index-end-stx 
+                       "Indexes expected to be expressions with 'int constants and/or loop variables")
+    #| (define dx-index-end-number-atom (atom-number dx-index-end-number)) |#
+    #| (define dx-index-start-number-atom (atom-number dx-index-start-number)) |#
+    
     (with-syntax*
-        ((slice-range (quasisyntax/loc stx 
-                        (fx- #,dx-index-end-number
-                             #,dx-index-start-number))))
-      (throw-if-not-type 'int-index 
-                         dx-index-start-stx 
-                         "Indexes expected to be expressions with 'int constants and/or loop variables")
-      (throw-if-not-type 'int-index 
-                         dx-index-end-stx 
-                         "Indexes expected to be expressions with 'int constants and/or loop variables")
+      ((slice-range (quasisyntax/loc stx 
+                                       (fx- #,dx-index-end-number
+                                            #,dx-index-start-number))))
+
       (when (exact-integer? dx-index-start-number)
         (when (fx< dx-index-start-number 0)
           (raise-syntax-error
-           #f
-           (format "index must be nonnegative") stx)))
+            #f
+            (format "index must be nonnegative") stx)))
       (when (exact-integer? dx-index-end-number)
         (when (fx> dx-index-end-number expanded-range-dx)
           (raise-syntax-error
-           #f
-           (format "slice end index ~a is out of range [0, ~a)" dx-index-end-number expanded-range-dx) stx)))
+            #f
+            (format "slice end index ~a is out of range [0, ~a)" dx-index-end-number expanded-range-dx) stx)))
       ; (println "foo")
       (with-syntax ((index-range-checks 
-                     (quasisyntax/loc
-                         stx
-                       (begin
-                         ;; NOTE: if index is not expanded to a number in compile time, insert check in runtime
-                         #,(when (not (exact-integer? dx-index-start-number))
-                             #`(when (fx< #,dx-index-start-number 0)
-                                 (raise-syntax-error
-                                  #f
-                                  (format "index must be nonnegative") #'#,stx)))
-                         #,(when (not (exact-integer? dx-index-end-number))
-                             #`(when (fx> #,dx-index-end-number #,expanded-range-dx)
-                                 (raise-syntax-error
-                                  #f
-                                  (format "slice end index ~a is out of range [0, ~a)" #,dx-index-end-number #,expanded-range-dx) #'#,stx)))))))
+                      (quasisyntax/loc
+                        stx
+                        (begin
+                          ;; NOTE: if index is not expanded to a number in compile time, insert check in runtime
+                          #,(when (not (exact-integer? dx-index-start-number))
+                              #`(when (fx< #,dx-index-start-number 0)
+                                  (raise-syntax-error
+                                    #f
+                                    (format "index must be nonnegative") #'#,stx)))
+                          #,(when (not (exact-integer? dx-index-end-number))
+                              #`(when (fx> #,dx-index-end-number #,expanded-range-dx)
+                                  (raise-syntax-error
+                                    #f
+                                    (format "slice end index ~a is out of range [0, ~a)" #,dx-index-end-number #,expanded-range-dx) #'#,stx)))))))
         (values dx-index-start-stx #'slice-range #'index-range-checks)))))
 
 (define-for-syntax (throw-if-r-value-is-slice stx r-value-stx)
@@ -932,12 +975,7 @@
       (raise-syntax-error #f
                           (format "the right-hand side is slice, but the left-hand one is not") stx))))
 
-(define-for-syntax (range-casting-check stx r-value-type lvalue-outer-prod-range)
-  (when (is-slice? (syntax->datum r-value-type))
-    (with-syntax ((rvalue-slice-range (get-slice-range (syntax-e r-value-type))))
-      #`(unless (fx= #,lvalue-outer-prod-range #,#'rvalue-slice-range)
-          (raise-syntax-error #f 
-                              (format "can not cast right-hand side range ~v to the left-hand side range ~v" #,#'rvalue-slice-range #,lvalue-outer-prod-range) #'#,stx)))))
+
 
 ;; TODO: refactor to reduce bindings duplication
 (define-syntax (der-annot stx)
@@ -1000,7 +1038,7 @@
                             expanded-range-dx 
                             dx-idx-expanded 
                             name-2-dat stx)
-       ;  (println "der-annot")
+       (println "der-annot")
        (let*-values (((v0 v1 v2 df-name-src-pos) (search-name-backrun stx #'df-name))
                     ;  ((v3 v4 v5 dx-name-src-pos) (search-name-backrun stx #'dx-name))
                      ((dx-index-start-stx dx-slice-range dx-index-range-checks)
@@ -1049,13 +1087,13 @@
                       (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'dx-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'dx-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (let ((#,#'slice-idx-synt 0))
                          der-value
                          (for/list ((#,#'dx-slice-idx-synt (in-range 0 #,#'dx-slice-range)))
@@ -1098,14 +1136,14 @@
                    (dx-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                    (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                    (lvalue-outer-prod-range #'dx-slice-range)
-                   (r-value-exp (local-expand #'der-value 'expression '()))
-                   (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                   (r-value-exp (local-expand #'der-value 'expression '())))
+                (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                 (quasisyntax/loc
                     stx
                   (begin
                     #,#'dx-index-range-checks
                     #,(range-check-stx stx df-idx-expanded expanded-range-df)
-                    #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                    #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                     (let ((#,#'slice-idx-synt 0))
                          der-value
                          (for/list ((#,#'dx-slice-idx-synt (in-range 0 #,#'dx-slice-range)))
@@ -1119,13 +1157,13 @@
                       (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'df-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        (let ((#,#'slice-idx-synt 0))
                             der-value
                             (for/list ((#,#'df-slice-idx-synt (in-range 0 #,#'df-slice-range)))
@@ -1140,14 +1178,14 @@
                       (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                   (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'df-index-range-checks
                        #,(range-check-stx stx dx-idx-expanded expanded-range-dx)
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        ;; assign placeholder value to slice variable which result is ignored. 
                        (let ((#,#'slice-idx-synt 0))
                          der-value
@@ -1164,14 +1202,15 @@
                       (df-full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (dx-full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'(fx* df-slice-range dx-slice-range))
-                      (r-value-exp (local-expand #'der-value 'expression '()))
-                      (r-value-type (syntax-property #'r-value-exp 'landau-type)))
+                      (r-value-exp (local-expand #'der-value 'expression '())))
+                     (define r-value-type (syntax-property #'r-value-exp 'landau-type))
+                     (displayln (format "r-value-type ~a" r-value-type))
                    (quasisyntax/loc
                        stx
                      (begin
                        #,#'df-index-range-checks
                        #,#'dx-index-range-checks
-                       #,(range-casting-check stx #'r-value-type #'lvalue-outer-prod-range)
+                       #,(range-casting-check stx r-value-type #'lvalue-outer-prod-range)
                        ;; assign placeholder value to slice variable which result is ignored. 
                        (let ((#,#'slice-idx-synt 0))
                               der-value ;; to trigger range checks
@@ -1208,34 +1247,34 @@
         (op1-atom (atom-number op1))
         (op2-atom (atom-number op2)))
     ; (println (format "~a ~a" type1 type2))
-    (cond
-      ((and (equal? type1 'int) (equal? type2 'int))
+    (match (list type1 type2)
+      ((list 'int 'int)
        (values op1 op2 'int))
-      ((and (equal? type1 'real) (equal? type2 'real))
+      ((list 'real 'real)
        (values op1 op2 'real))
-      ((and (equal? type1 'int) (equal? type2 'real))
+      ((list 'int 'real)
        (values (datum->syntax
                 op1 (if op1-atom (exact->inexact op1-atom) `(exact->inexact ,op1)) op1)
                op2 'real))
-      ((and (equal? type1 'real) (equal? type2 'int))
+      ((list 'real 'int)
        (values op1 (datum->syntax
                     op2 (if op2-atom (exact->inexact op2-atom) `(exact->inexact ,op2)) op2)
                'real))
-      ((and (equal? type1 'int-index) (equal? type2 'int-index))
+      ((list 'int-index 'int-index)
        (values op1 op2 'int-index))
-      ((and (equal? type1 'int) (equal? type2 'int-index))
+      ((list 'int 'int-index)
        (values op1 op2 'int))
-      ((and (equal? type1 'int-index) (equal? type2 'int))
+      ((list 'int-index 'int)
        (values op1 op2 'int))
-      ((and (equal? type1 'real) (equal? type2 'int-index))
+      ((list 'real 'int-index)
        (values op1 (datum->syntax
                     op2 (if op2-atom (exact->inexact op2-atom) `(exact->inexact ,op2)) op2)
                'real))
-      ((and (equal? type1 'int-index) (equal? type2 'real))
+      ((list 'int-index 'real)
        (values (datum->syntax
                 op1 (if op1-atom (exact->inexact op1-atom) `(exact->inexact ,op1)) op1)
                op2 'real))
-      ((and (is-slice? type1) (is-slice? type2))
+      (`(,(? is-slice? type1) ,(? is-slice? type2))
        (let ((range1 (get-slice-range type1))
              (range2 (get-slice-range type2))
              (slice-type1 (get-slice-type type1))
@@ -1249,8 +1288,8 @@
              op2 
              type1))
            (else
-            (raise-syntax-error #f (format "cannot cast ~v and ~v" slice-type1 slice-type2) stx)))))
-      ((and (is-slice? type1) (not (is-slice? type2)))
+            (raise-syntax-error #f (format "cannot1 cast ~v and ~v" slice-type1 slice-type2) stx)))))
+      (`(,(? is-slice? type1) ,(? (compose not is-slice?) type2))
        (let ((range1 (get-slice-range type1))
              (slice-type1 (get-slice-type type1)))
          (match (list slice-type1 type2)
@@ -1268,7 +1307,7 @@
            ((list 'real 'real) (values op1 op2 type1))
            (else
             (raise-syntax-error #f (format "cannot cast ~v and ~v" slice-type1 type2) stx)))))
-      ((and (is-slice? type2) (not (is-slice? type1)))
+      (`(,(? (compose not is-slice?) type1) ,(? is-slice? type2))
        (let ((range2 (get-slice-range type2))
              (slice-type2 (get-slice-type type2)))
          (match (list slice-type2 type1)
@@ -1286,7 +1325,7 @@
            (else
             (raise-syntax-error #f (format "cannot cast ~v and ~v" slice-type2 type1) stx)))))
       (else
-       (raise-syntax-error #f (format "cannot cast ~v and ~v. op1: ~v, op2: ~v" type1 type2 op1 op2) stx)))))
+       (raise-syntax-error #f (format "cannot cast ~v and ~v. op1: ~v, op2: ~v." type1 type2 op1 op2) stx)))))
 
 
 (define-syntax (expr stx)
@@ -1364,6 +1403,9 @@
    (define flat-actions-list (reverse (splice-nested actions-list)))
    (define msg-template "bug: not self-sufficent function should not contain ~a term")
    (define (rebind-ref ref bindings)
+     (define var-name (match ref ((list _ (var-symbol name _) _) name)))
+     (define (is-constant? _name)
+       (hash-has-key? constants (string->symbol _name)))
      (match ref
        ((list 'array-ref vs idx) 
         ;; NOTE: If there is no such a key, then the key is a 
@@ -1372,7 +1414,9 @@
         ;; var -> preserve (really does not matter, because it is 0 in both cases)
         ;; cell -> override
         ;; array -> preserve 
-        (match (hash-ref bindings vs (thunk 'function-inner-variable))
+        (match (hash-ref bindings vs (thunk 'not-a-function-parameter))
+          
+
           ((func-arg-binding 'var (list 'array-ref arg-vs arg-idx))
            (list 'array-ref arg-vs idx))
 
@@ -1382,11 +1426,14 @@
           ((func-arg-binding 'array (list 'array-ref arg-vs arg-idx))
            (list 'array-ref arg-vs idx))
 
-          ('function-inner-variable 
-           ;; NOTE: inlined function's local variables are prepanded with _
-           (match ref
-             ((list 'array-ref (var-symbol name src-pos) ref-idx)
-              (list 'array-ref (var-symbol (format "_~a" name) src-pos) ref-idx))))
+          ('not-a-function-parameter
+           (cond
+             ((is-constant? var-name) (list 'array-ref vs idx))
+
+             ;; NOTE: inlined function's local variables are prepanded with _
+             (else (match ref
+                  ((list 'array-ref (var-symbol name src-pos) ref-idx)
+                   (list 'array-ref (var-symbol (format "_~a" name) src-pos) ref-idx))))))
           #| ('function-inner-variable |# 
           #|  ref) |#
 
@@ -1459,7 +1506,8 @@
             (true-src-pos (syntax-position #'function-name))
             ;; NOTE: return var name is modified to handle ambiguity.
             ; In semantics.rkt name is modified in the same way
-            (func-name-true-vs (var-symbol (format "~a~a" func-str true-src-pos) true-src-pos))
+            (function-return-variable-name (format "~a~a" func-str true-src-pos))
+            (func-name-true-vs (var-symbol function-return-variable-name true-src-pos))
             (func-pars-list (for/list ((par-value (in-list (syntax-e #'(par*.par-value ...)))))
                               par-value))
             (par-list-len (length func-pars-list))
@@ -1487,8 +1535,6 @@
                                         (syntax/loc stx expanded1)))))))
          ;; NOTE: User-defined functions
          ;; FIXME perform checks
-         ;; FIXME generate var-decl for function return variable. Make sure that
-         ; variable will have proper src-pos
          (let*
            ((func-info (if (hash-has-key? funcs-info-GLOBAL func-name-fake-vs)
                          (hash-ref funcs-info-GLOBAL func-name-fake-vs)
@@ -1503,9 +1549,6 @@
             (subfunc-call-box-value (make-state (list)))
             (func-call-box-value (syntax-parameter-value #'func-call-box)))
 
-           #| ;; NOTE: add function's return variable (unique to an each call) to the real-vars-table |#
-           #| (add-real-var! #'function-name type stx (syntax-parameter-value #'real-vars-table)) |#
-
            (with-syntax
              ((slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
               (pars-list-expanded 
@@ -1519,59 +1562,110 @@
                              (func-is-called-inside-argument #t))
                             par) 'expression '()))))))
 
-             #| (displayln "func-pars-list:") |#
-             #| (displayln func-pars-list) |#
-             #| (displayln #'pars-list-expanded) |#
              (displayln "FIXME: check if funciton local var are in der-table if they need a derivative after inlining")
-             ;; TODO How to handle the case when in one inline different derivatives needed?
-             ; Set all possible as needed?
 
              ;; NOTE: inline funciton body and bind it's parameters to the passed arguments
              (displayln "FIXME: generate normalizied arg variables in semantics.rkt")
              (define current-func-arg-normalizations (make-state (list)))
              (define module-funcs-table (syntax-parameter-value #'module-funcs-table-parameter))
-             ;; FIXME check args and parameters types match here
-             (define args (for/list ((arg-number (in-naturals))
-                                     (arg (syntax-e #'pars-list-expanded)))
-                            (define evaluated-arg (evaluate arg))
-                            (match evaluated-arg
-                              ((list) 'constant)
+             (define args 
+               (for/list ((arg-number (in-naturals))
+                          (arg (syntax-e #'pars-list-expanded)))
+                 (define evaluated-arg (evaluate arg))
+                 (match evaluated-arg
+                   ((list) 'constant)
 
-                              ((list (list ref vs n)) 
-                               (begin
-                                 (define _getter (syntax-property arg 'getter-info))
-                                 (unless _getter 
-                                   (error (format "bug: arg: ~a has no getter property" arg)))
-                                 (define getter (getter-info-type _getter))
-                                 (func-arg-binding getter (list ref vs n))))
+                   ((list (list ref vs n)) 
+                    (begin
+                      (define _getter (syntax-property arg 'getter-info))
+                      (unless _getter 
+                        (error (format "bug: arg: ~a has no getter property" arg)))
+                      (define getter (getter-info-type _getter))
+                      (func-arg-binding getter (list ref vs n))))
 
-                              ((list refs ...) 
-                               (begin
-                                 ;; NOTE semantics.rkt can't handle expressions inside an argument
-                                 ;; TODO handle it
-                                 (raise-syntax-error 
-                                               #f 
-                                               "expressions are not allowed inside function arguments" stx)
-                                 (define args-norms (read-state current-func-arg-normalizations))
-                                 (define norm-arg-vs (var-symbol
-                                                       (make-norm-arg-name func-str arg-number)
-                                                       (syntax-position arg)))
-                                 (define norm-arg-ref (list 'array-ref norm-arg-vs 0))
-                                 (define arg-normalization
-                                   (list 'assign 
-                                         norm-arg-ref
-                                         refs))
-                                 (write-state! current-func-arg-normalizations
-                                               (append args-norms
-                                                       (list arg-normalization)))
-                                 (define arg-getter-type 'var)
-                                 (func-arg-binding arg-getter-type norm-arg-ref))))))
+                   ((list refs ...) 
+                    (begin
+                      ;; NOTE semantics.rkt can't handle expressions inside an argument
+                      ;; TODO handle them
+                      (raise-syntax-error 
+                        #f 
+                        "expressions are not allowed inside function arguments" stx)
+                      (define args-norms (read-state current-func-arg-normalizations))
+                      (define norm-arg-vs (var-symbol
+                                            (make-norm-arg-name func-str arg-number)
+                                            (syntax-position arg)))
+                      (define norm-arg-ref (list 'array-ref norm-arg-vs 0))
+                      (define arg-normalization
+                        (list 'assign 
+                              norm-arg-ref
+                              refs))
+                      (write-state! current-func-arg-normalizations
+                                    (append args-norms
+                                            (list arg-normalization)))
+                      (define arg-getter-type 'var)
+                      (func-arg-binding arg-getter-type norm-arg-ref))))))
+
+             (define args-types 
+               (for/list ((arg (syntax-e #'pars-list-expanded)))
+                 (define _arg-getter (syntax-property arg 'getter-info))
+                 (define _arg-name (syntax-property arg 'get-value-name))
+                 (define _arg-type (to-landau-type stx (syntax-property arg 'landau-type)))
+                 (match _arg-getter
+                   (#f (list 'constant (to-landau-type stx _arg-type)))
+                   (_ (begin
+                        (define _arg-full-type
+                          (syntax-property arg 'full-type))
+                        (list _arg-getter _arg-full-type))))))
 
              (define func-template (hash-ref module-funcs-table (string->symbol func-str)))
+             (define func-template-parameters-vs 
+               (for/list ((par (in-list (function-inline-template-.parameters func-template))))
+                 (match par
+                   ((list par-vs _) par-vs))))
+
+             (displayln (format "args-types: ~a" args-types))
+             (displayln (format "pars-types: ~a" (function-inline-template-.parameters func-template)))
+
+             (define (landau-type->string t)
+               (match t
+                 ((list b (list)) (format "~a" b))
+                 ((list b (list n)) (format "~a[~a]" b n))))
+
+             (define (check-arguments _stx _func-str expected-types given-types)
+               (define expected-n (length expected-types))
+               (define given-n (length given-types))
+               (unless (equal? expected-n given-n)
+                 (raise-syntax-error 
+                   #f 
+                   (format "function ~a arity mismatch: expected ~a, given: ~a"
+                           _func-str expected-n given-n) _stx))
+               (for ((arg-n (in-naturals))
+                     (expected-type-info (in-list expected-types))
+                     (given-type-info (in-list given-types)))
+                 (define expected-type
+                   (match expected-type-info
+                     ((list _ type) type)))
+                 (define-values (given-type given-getter)
+                   (match given-type-info
+                     ((list getter type) (values type getter))))
+                 (when (equal? given-getter 'slice)
+                   (raise-syntax-error 
+                     #f 
+                     (format "function ~a argument type mismatch: argument slices are not implemented"
+                             _func-str) _stx))
+                 (unless (equal? expected-type given-type)
+                   (raise-syntax-error 
+                     #f 
+                     (format 
+                       "function ~a argument type mismatch: argument ~a expected to be ~a, given: ~a"
+                       _func-str arg-n (landau-type->string expected-type) (landau-type->string given-type))
+                     _stx))))
+
+             (check-arguments stx func-str (function-inline-template-.parameters func-template) args-types)
              (define/contract bindings 
                               (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
                               (make-hash (zip cons 
-                                              (function-inline-template-.parameters func-template)
+                                              func-template-parameters-vs
                                               args)))
              (add-function-return-variable-binding! bindings 
                                                     func-name-fake-vs 
@@ -1582,8 +1676,6 @@
              (define current-function-return-var-decl
                (list 'var-decl func-name-true-vs (to-landau-type stx type)))
 
-             ;; FIXME function var-symbol is not replaced in inlined-function and have src-pos 0.
-             ; Replace it with actual src-pos
              (define inlined-function 
                (bind-parameters-to-arguments 
                  (function-inline-template-.actions-list func-template) 
@@ -1610,29 +1702,48 @@
              #| (displayln (format "~a: func-call-box-value:" func-str)) |#
              #| (pretty-print func-call-box-value) |#
 
-             (with-syntax-property 'getter-info func-getter
-                                   (is-type_ type
-                                             (if (syntax-parameter-value #'func-is-called-inside-argument)
-                                               ;; NOTE: Function called inside the argument of another function.
-                                               ; Return a link to the function's return-variable.
-                                               ; Actions of assignation to the variable are appended to the
-                                               ; list of actions and written to `func-call-box-value`.
-                                               ; The list of actions is then fetched during the `assignation` macro expansion
-                                               ; and prepanded to the assignation action. 
-                                               (quasisyntax/loc 
-                                                 stx
-                                                 (list (list 'array-ref #,func-name-true-vs 0)))
-                                               ;; NOTE: This function call is top-level and in case of
-                                               ; function returns an array, return-value is inserted
-                                               ; into the loop, where the output array is copied to the
-                                               ; assignation left-hand side variable.
-                                               (if (equal? (getter-info-type func-getter) 'array)
-                                                 (quasisyntax/loc
-                                                   stx
-                                                   (list (list 'array-ref #,func-name-true-vs #,#'slice-idx-synt)))
-                                                 (quasisyntax/loc
-                                                   stx
-                                                   (list (list 'array-ref #,func-name-true-vs 0))))))))))))))
+             (with-syntax-property
+               'full-type (to-landau-type stx type)
+               (with-syntax-property 
+                 'get-value-name (string->symbol function-return-variable-name) 
+                 (with-syntax-property 
+                   'getter-info func-getter
+                   (if (syntax-parameter-value #'func-is-called-inside-argument)
+                     ;; NOTE: Function called inside the argument of another function.
+                     ; Return a link to the function's return-variable.
+                     ; Actions of assignation to the variable are appended to the
+                     ; list of actions and written to `func-call-box-value`.
+                     ; The list of actions is then fetched during the `assignation` macro expansion
+                     ; and prepanded to the assignation action. 
+                     (match (getter-info-type func-getter)
+                       ('array
+                        (with-syntax-property 
+                          'landau-type (to-landau-type stx type)
+                          (quasisyntax/loc 
+                            stx
+                            (list (list 'array-ref #,func-name-true-vs 0)))))
+                       (_
+                         (with-syntax-property 
+                           'landau-type (func-info-output-base-type func-info)
+                           (quasisyntax/loc 
+                             stx
+                             (list (list 'array-ref #,func-name-true-vs 0))))))
+                     ;; NOTE: This function call is top-level and in case of
+                     ; function returns an array, return-value is inserted
+                     ; into the loop, where the output array is copied to the
+                     ; assignation left-hand side variable.
+                     (match (getter-info-type func-getter)
+                       ('array 
+                        (with-syntax-property
+                          'landau-type (to-landau-type stx type)
+                          (quasisyntax/loc
+                            stx
+                            (list (list 'array-ref #,func-name-true-vs #,#'slice-idx-synt)))))
+                       (_ (with-syntax-property 
+                            'landau-type (func-info-output-base-type func-info)
+                            (quasisyntax/loc
+                              stx
+                              (list (list 'array-ref #,func-name-true-vs 0)))))))))))))))))
 
 
 (define-syntax (term stx)
@@ -1871,6 +1982,7 @@
     (((~literal assignation) name:id 
                              getter:getter-cls
                              "=" value:expr)
+
      (let*-values (((name_) (syntax->datum #'name))
                    ((func-name) (syntax-parameter-value #'function-name))
                    ((func-basic-type) (car (syntax-parameter-value #'function-return-type)))
@@ -1920,8 +2032,17 @@
                                           ; called in the right-hand side of the current assignation
                                           ((func-call-box #,func-inline-list)) 
                                           value) 'expression (list))))
-                      (value-exp #'value-exp_)
-                      (value-type (syntax-property #'value-exp_ 'landau-type)))
+                      (value-exp #'value-exp_))
+
+         (define value-type (syntax-property #'value-exp_ 'landau-type))
+         (define-values 
+           (value-base-type value-range) 
+           (match value-type
+                              ((list b (list n)) (values b n))
+                              (b (values b #f))))
+
+         (displayln (format "value-type ~a value-base-type ~a value-range ~a" value-type value-base-type value-range))
+
          ;; NOTE: Indexes are resolved at zeroth pass
          (let* ((err-msg "index must be an integer expression of constants and loop variables")
                 (throw-if-not-int-index
@@ -1930,7 +2051,7 @@
                      (raise-syntax-error #f err-msg idx-stx)))))
            (when (syntax->datum #'getter.index)
              (throw-if-not-int-index #'getter.index #'index-exp))
-           (when (and (not slice-colon_) (is-slice? (syntax->datum #'value-type)))
+           (when (and (not slice-colon_) (is-slice? value-type))
              (raise-syntax-error 
                #f 
                "the right-hand expression is a slice, but the left-hand one is not. A slice must be assigned to a slice"
@@ -2003,7 +2124,7 @@
                                                           #'index-end-expanded))
                                  (lvalue-slice-range #'(fx- index-end-expanded_
                                                             index-start-expanded_))
-                                 (rvalue-slice-range (get-slice-range (syntax-e #'value-type))))
+                                 (rvalue-slice-range value-range))
                     
                     (quasisyntax/loc
                         stx
@@ -2404,3 +2525,4 @@
      (syntax/loc stx (list 'get-derivative get-value-1 get-value-1)))))
 ;; NOTE:
 ;; non-array dx arguments are casted to single-cell array
+
