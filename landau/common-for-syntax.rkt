@@ -1,5 +1,4 @@
-#lang racket
-(require 
+#lang racket (require 
  (for-syntax (for-syntax racket/base racket/syntax syntax/parse))
  (for-syntax racket/base
              racket/contract
@@ -32,6 +31,12 @@
 (provide (all-defined-out))
 (provide (for-syntax (except-out (all-defined-out) binary-op-cast)))
 
+(define-for-syntax TIME-TABLE (make-hash (list (cons 'head-time 0.0)
+                                               (cons 'tail-time 0.0)
+                                               (cons 'local-expand-2 0.0)
+                                               (cons 'to-landau-type 0.0)
+                                               (cons 'search-name 0.0)
+                                               (cons 'local-expand 0.0))))
 (define-for-syntax (fmap f maybe-false)
   (if maybe-false
       (f maybe-false)
@@ -778,3 +783,96 @@
     #:attr index-start #'pat.index-start
     #:attr index-end #'pat.index-end)
    ))
+
+(begin-for-syntax
+ (define (timeit! time-table time-key proc)
+   (define tik (current-inexact-milliseconds))
+   (define r (proc))
+   (define tok (current-inexact-milliseconds))
+   (hash-update! time-table time-key (lambda (old-time) (fl+ old-time (fl- tok tik))) 0.0)
+   (hash-update! time-table (string->symbol (format "~a-counts" time-key))
+                 (lambda (x) (add1 x)) 0)
+   r)
+
+ (define (timeit/values! time-table time-key proc)
+   (define tik (current-inexact-milliseconds))
+   (define vals (call-with-values proc list))
+   (define tok (current-inexact-milliseconds))
+   (hash-update! time-table time-key (lambda (old-time) (fl+ old-time (fl- tok tik))) 0.0)
+   (hash-update! time-table (string->symbol (format "~a-counts" time-key))
+                 (lambda (x) (add1 x)) 0)
+   (apply values vals))
+
+
+ (define
+   (search-name stx ctx name name-stx dx-name-str-in-current-al get-name-mode-on idx)
+   #| (-> (syntax/c any/c) |# 
+          #|     (or/c func-context/c #f) |# 
+          #|     symbol? |# 
+          #|     (syntax/c any/c) |# 
+          #|     (or/c string? false/c) |#
+          #|     boolean? |#
+          #|     (syntax/c any/c) |#
+          #|     ;; NOTE: (resolved-value type name-is-dx src-pos) |#
+          #|     (values (or/c any-number? (syntax/c any/c)) type/c boolean? integer?)) |#
+
+   (let 
+     ;; NOTE: src-pos is used to separate variables with the same name
+     ((fake-src-pos 0)
+      (not-dx-name #f))
+     (cond
+       ((timeit! TIME-TABLE 'search-constant (thunk (hash-has-key? constants name)))
+        (let ((c (hash-ref constants name)))
+          (let ((type (constant-type c)))
+            (if (and (is-array-type? type) (atom-number idx))
+              (let ((idx-atom-number (atom-number idx)))
+                (values ;; Where to store const& in compile time or runtime? not all indexes could be resolved
+                  (rl-vector-ref (constant-array c) idx-atom-number)
+                  (constant-type c)
+                  not-dx-name
+                  fake-src-pos))
+              (values
+                (datum->syntax stx (constant-value c))
+                (constant-type c)
+                not-dx-name
+                fake-src-pos)))))
+       (else
+         (begin
+           (when (equal? ctx #f)
+             (raise-syntax-error #f "name not found" name-stx))
+           (let ((func-name (func-context-.function-name ctx))
+                 (var (timeit! TIME-TABLE 'search-variable (thunk (search-variable
+                                                         name (func-context-.current-variables ctx))))))
+             (cond
+               (var
+                 (values (datum->syntax stx (variable-symbol var))
+                         (variable-type var)
+                         (equal? (symbol->string name) dx-name-str-in-current-al)
+                         (variable-src-pos var)))
+               ((equal? name func-name)
+                (let ((func-return-value (func-context-.function-return-value ctx)))
+                  (values
+                    (datum->syntax stx func-return-value)
+                    (func-context-.function-return-type ctx)
+                    not-dx-name
+                    fake-src-pos)))
+               (else
+                 (let ((arg (timeit! TIME-TABLE 'search-argument (thunk (search-argument
+                                                               name (func-context-.current-arguments ctx))))))
+                   (cond
+                     (arg
+                       (values
+                         (datum->syntax stx (argument-symbol arg))
+                         (argument-type arg)
+                         (equal? (symbol->string name) dx-name-str-in-current-al)
+                         fake-src-pos))
+                     ((and get-name-mode-on (hash-has-key? parameters name))
+                      (values
+                        name-stx
+                        (list 'real (hash-ref parameters name))
+                        not-dx-name
+                        fake-src-pos))
+                     (else
+                       (begin
+                         (pretty-print (func-context-.current-variables ctx))
+                         (raise-syntax-error #f "name not found" name-stx))))))))))))))

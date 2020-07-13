@@ -432,13 +432,19 @@
 (define (new-variables-nesting vars)
   (variables (make-hash) vars))
 
+(define HASH-HIT (make-hash))
+
 (define (search-variable name vars)
   (cond
     ((not vars) #f)
     ((hash-has-key? (variables-current-level vars) name)
-     (hash-ref (variables-current-level vars) name))
+     (begin
+       (hash-update! HASH-HIT 'hit (lambda (x) (add1 x)) 0)
+       (hash-ref (variables-current-level vars) name)))
     ((variables-next-level vars)
-     (search-variable name (variables-next-level vars)))
+     (begin
+       (hash-update! HASH-HIT 'miss (lambda (x) (add1 x)) 0)
+       (search-variable name (variables-next-level vars))))
     (else #f)))
 
 (define (search-argument name args)
@@ -680,6 +686,7 @@
 
 (define INLINE-VARIABLE-FORMAT "_inl_~a_~a")
 
-(define (make-inlined-variable-name inlined-function-name local-variable-name)
+(define(make-inlined-variable-name inlined-function-name local-variable-name)
   (format INLINE-VARIABLE-FORMAT inlined-function-name local-variable-name))
+
 

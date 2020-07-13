@@ -41,7 +41,6 @@
          var-decl decl-block assignation number if-expr bool-expr bool-term
          bool-factor single-term expr-body func-body for-expr der-apply der-annot
          al_index_name_symbol discard parameter func-call slice_idx print get-derivative
-
          ;; NOTE: metalang syntax
          _if _if-stm _begin _for _forever _let _let-int _define-var _define-var-with-func-call _decl-real-func _pure-func-call
          _not _or _and _equal?
@@ -51,7 +50,8 @@
          _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call _func-decl
          _sin _cos _expt _sqr _sqrt
          _0.0 _1.0 _2.0 _0.5
-         _break _nothing _empty-statement _local)
+         _break _nothing _empty-statement _local
+         )
 
 (define-syntax-parameter func-context #f)
 (define-syntax-parameter func-call-box 'func-call-box-not-set)
@@ -63,13 +63,12 @@
 (define-syntax-parameter get-name-mode #f)
 ;; NOTE: #t if function is called inside an argument of another function. Needs for the func-call ordering
 (define-syntax-parameter func-is-called-inside-argument #f)
-(define-syntax-parameter module-funcs-table-parameter #f)
 
 (define-for-syntax slice-idx-name-GLOBAL 'slice_idx)
 (define-for-syntax df-slice-idx-name-GLOBAL 'df_slice_idx)
 (define-for-syntax dx-slice-idx-name-GLOBAL 'dx_slice_idx)
 (define-for-syntax func-slice-idx-name-GLOBAL 'func_slice_idx)
-
+(define-for-syntax MODULE-FUNCS-TABLE (make-hash))
 (define-for-syntax functions-data-ht-GLOBAL #f)
 (define-for-syntax funcs-info-GLOBAL #f)
 
@@ -198,20 +197,20 @@
   (get-arg-type-helper d-name (func-context-.current-arguments (syntax-parameter-value #'func-context))))
 
 
-(begin-for-syntax
- (define/contract (mappend body)
-                  (-> (syntax/c any/c)
-                      (syntax/c any/c))
-  (match (target-lang TARGET)
-    ('racket #`(begin #,@body))
-    ;; FIXME: 1st element of list is <void>
-    ('ansi-c #`(apply string-append (filter string? (list #,@body))))))
+#| (begin-for-syntax |#
+#|  (define/contract (mappend body) |#
+#|                   (-> (syntax/c any/c) |#
+#|                       (syntax/c any/c)) |#
+#|   (match (target-lang TARGET) |#
+#|     ('racket #`(begin #,@body)) |#
+#|     ;; FIXME: 1st element of list is <void> |#
+#|     ('ansi-c #`(apply string-append (filter string? (list #,@body)))))) |#
 
- ;; NOTE: concatinate actions for Racket and C backend
- (define mbegin
-   (match (target-lang TARGET)
-     ('racket 'begin)
-     ('ansi-c 'string-append))))
+#|  ;; NOTE: concatinate actions for Racket and C backend |#
+#|  (define mbegin |#
+#|    (match (target-lang TARGET) |#
+#|      ('racket 'begin) |#
+#|      ('ansi-c 'string-append)))) |#
 
 (define-for-syntax (write-source stx src-synt)
   (match (target-lang TARGET)
@@ -328,19 +327,14 @@
         ;; NOTE: Make getter functions to access derivatives values
         ;; Each backend has it's own getter implementation
        (((get-dfdx/array get-dfdx/array-dx) (make-derivative-getter-func/array stx))
-        ((get-dfdx) (make-derivative-getter-func stx))
-        ((module-funcs-table) (make-hash)))
+        ((get-dfdx) (make-derivative-getter-func stx)))
        (with-syntax*
          ((get-dfdx/array get-dfdx/array)
           (get-dfdx/array-dx get-dfdx/array-dx)
           (get-dfdx get-dfdx))
          (write-source stx
-                        (quasisyntax/loc 
-                          stx 
-                          (syntax-parameterize 
-                            ((module-funcs-table-parameter #,module-funcs-table)) 
-                            #,(datum->syntax stx `(_begin ,#'get-dfdx/array ,#'get-dfdx/array-dx ,#'get-dfdx
-                                                          (_begin ,@#'(body ...))))))))))]))
+                        (datum->syntax stx `(_begin ,#'get-dfdx/array ,#'get-dfdx/array-dx ,#'get-dfdx
+                                                          (_begin ,@#'(body ...))))))))]))
 
 (define-syntax (expr stx)
   (syntax-parse stx
@@ -970,6 +964,8 @@
              #|  funcs-info-GLOBAL |#
              #|  (func-context-.current-variables (syntax-parameter-value #'func-context)) |#
              #|  (func-context-.current-arguments (syntax-parameter-value #'func-context))) |#
+             (when (equal? (target-lang TARGET) 'racket)
+               (raise-syntax-error #f "user defined functions are temporary broken in Racket backend. Please, use C backend instead." stx))
              ;; TODO pass the function-name in inlined-function-list to use its syntax-position
              (with-syntax* 
                ((typecheck-nonsense #'(error "Bug: typecheck-nonsense in runtime"))
@@ -1036,8 +1032,7 @@
                                                 to a numerical constant" stx))))))
 
                (displayln (format "func-argument-names: ~a" func-argument-names))
-               (define func-template (hash-ref (syntax-parameter-value #'module-funcs-table-parameter)
-                                               (string->symbol func-str)))
+               (define func-template (hash-ref MODULE-FUNCS-TABLE (string->symbol func-str)))
                (displayln 
                  "FIXME: Normalize arguments so their expressions are resolved to a single variable or constant.")
                (define func-parameters-symbols func-argument-names)
@@ -1059,8 +1054,7 @@
                (pretty-print (syntax->datum inlined-function))
 
                ;; NOTE: Update pairs-list. It is processed in assignation macro
-               (when (equal? 'ansi-c (target-lang TARGET)) ;; FIXME need to work for racket too
-                 (unless (equal? func-call-box-value 'func-call-box-not-set)
+               (unless (equal? func-call-box-value 'func-call-box-not-set)
                    (begin
                      (define/contract template-value 
                                       function-inline-semantics-template/c
@@ -1075,7 +1069,7 @@
                                (read-state func-call-box-value) ;; func-call list from neighbors 
                                ;; on the same call depth level 
                                (list template-value)))
-                     (write-state! func-call-box-value updated-call-pairs-list))))
+                     (write-state! func-call-box-value updated-call-pairs-list)))
 
                ;; NOTE: check if the function call is inside another function call
                ;; If it is so, return-vector literal should be genetated instead of a slice:
@@ -1096,20 +1090,10 @@
                                                     (syntax->datum #'function-return-variable)
                                                     #'typecheck-nonsense)
                               
-                              (match (target-lang TARGET)
-                                ('racket
-                                 (error "FIXME: function call is not implemented")
-                                  #| (datum->syntax |#
-                                  #|   stx |#
-                                  #|   `(_vector-ref |# 
-                                  #|      (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted) |#
-                                  #|      (_var-ref ,#'slice-idx))) |#
-                                 )
-                                ('ansi-c
-                                 (datum->syntax
+                              (datum->syntax
                                    stx
                                    #| `(_var-ref ,#'func-return-symbol-stx) |#
-                                   `(get-value ,#'function-return-variable)))))))
+                                   `(get-value ,#'function-return-variable)))))
 
                  ((list "func return array:" _ 
                         "func is called inside argument:" #f)
@@ -1122,21 +1106,11 @@
                               (with-syntax*
                                 ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
                                  (func-return-symbol-stx (datum->syntax stx func-return-symbol)))
-                                (match (target-lang TARGET)
-                                  ('racket
-                                   (error "FIXME: function call is not implemented")
-                                  #| (datum->syntax |#
-                                  #|   stx |#
-                                  #|   `(_vector-ref |# 
-                                  #|      (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted) |#
-                                  #|      (_var-ref ,#'slice-idx))) |#
-                                   )
-                                  ('ansi-c
-                                   (datum->syntax
+                                (datum->syntax
                                      stx
                                      #| `(_vector-ref ,#'func-return-symbol-stx (_var-ref ,#'slice-idx)) |#
                                      `(get-value ,#'function-return-variable "[" 0 ":" ,#'func-slice-range "]")
-                                     )))))))
+                                     )))))
 
                  ((list "func return array:" #f 
                         "func is called inside argument:" _)
@@ -1146,19 +1120,9 @@
                               (with-syntax-property 'get-value-name 
                                                     (syntax->datum #'function-return-variable) 
                                                     #'typecheck-nonsense)
-                              (match (target-lang TARGET)
-                                ('racket
-                                 (error "FIXME: function call is not implemented")
-                                  #| (datum->syntax |#
-                                  #|   stx |#
-                                  #|   `(_vector-ref |# 
-                                  #|      (_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted) |#
-                                  #|      (_var-ref ,#'slice-idx))) |#
-                                 )
-                                ('ansi-c
-                                 (datum->syntax
+                              (datum->syntax
                                    stx
-                                   `(get-value ,#'function-return-variable)))))))
+                                   `(get-value ,#'function-return-variable)))))
 
                  ((list "func return array:" _ 
                         "func is called inside argument:" _)
@@ -1172,19 +1136,9 @@
                               (with-syntax*
                                 ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
                                  (func-return-symbol-stx (datum->syntax stx func-return-symbol)))
-                                (match (target-lang TARGET) ;; FIXME racket and C backends should be consistent
-                                  ('racket
-                                   (error "FIXME: function call is not implemented")
-                                   #| (datum->syntax |#
-                                   #|   stx |#
-                                   #|   `(_func-call ,#'function-name ,#'func-return-symbol-stx ,func-args-list-casted)) |#
-                                   )
-                                  ;; NOTE: return array. It is not to be used in 
-                                  ; expressions, only to pass as a function argument.
-                                  ('ansi-c
-                                   (datum->syntax
+                                (datum->syntax
                                      stx
-                                     `(get-value ,#'function-return-variable)))))))))))))))))
+                                     `(get-value ,#'function-return-variable)))))))))))))))
            
 
 (define-syntax (factor stx)
@@ -1338,7 +1292,6 @@
            (with-syntax ((ret (datum->syntax stx func-return-value))
                          (name (datum->syntax stx func-name))
                          (instantiated-func-var (instantiate (datum->syntax stx func-return-type))))
-             (displayln "FIXME: implement 'racket backend")
              (quasisyntax/loc stx
                (begin
                  (define (name #,@args-list)
@@ -1513,14 +1466,11 @@
                           self-sufficent-function?))
        (define arg-names (for/list ((arg (in-list (syntax-e #'(arg*.name ...)))))
                            (syntax->datum arg)))
-       (define module-funcs-table (syntax-parameter-value #'module-funcs-table-parameter))
-       (hash-set! module-funcs-table name_ (function-inline-semantics-template #'name 
+       (hash-set! MODULE-FUNCS-TABLE name_ (function-inline-semantics-template #'name 
                                                                                #'body 
                                                                                (to-landau-type stx func-return-type) 
                                                                                arg-names
                                                                                func-return-value))
-       (displayln "module-funcs-table:")
-       (pretty-print module-funcs-table)
        (begin
          (define-func! stx ctx #'(arg*.name ...) #'(arg*.type ...) #'body))))))
 
@@ -1587,9 +1537,6 @@
             (func-name-vs (var-symbol func-name-str fake-src-pos))
             (func-return-type (func-context-.function-return-type ctx))
             (grouped-keys-table (group-by-names (hash-keys (func-context-.der-table ctx)))))
-       (displayln "foo")
-       (displayln (func-context-.function-name ctx))
-      ;  (displayln (hash->string (func-context-.der-table ctx)))
        (with-syntax*
            ;; WARNING: Mutation of need-derivatives-set and need-only-value-set
            ((mappings-decl-list
@@ -1700,7 +1647,7 @@
 
 (define-syntax (var-decl stx)
   (syntax-parse stx
-    (({~literal var-decl};; if expr is array get-value, then emit declaration and assigantion syntax objects  
+    (({~literal var-decl};; if expr is array get-value, then emit declaration and assignation syntax objects  
                 ((~literal type) ((~literal array-type) basic-type "[" num "]")) name:id (~seq "=" value:expr)) 
      (datum->syntax stx `(decl-block 
                            (var-decl (type (array-type ,#'basic-type "[" ,#'num "]")) ,#'name)
@@ -1744,6 +1691,7 @@
                ((name-sym) (add-variable!
                        (func-context-.current-variables ctx) #'name final-type))
                ((name-sym-stx) (datum->syntax stx name-sym)))
+
           (displayln "ndt:")
           (pretty-print (func-context-.need-derivatives-table ctx))
            (displayln (format "name-vs final-type dual-r-vars need-variable ~a ~a ~a ~a" 
@@ -1872,85 +1820,13 @@
           #'"\n"))))))
 
 
-(begin-for-syntax
-  (define/contract
-    (search-name stx ctx name name-stx dx-name-str-in-current-al get-name-mode-on idx)
-    (-> (syntax/c any/c) 
-        (or/c func-context/c #f) 
-        symbol? 
-        (syntax/c any/c) 
-        (or/c string? false/c)
-        boolean?
-        (syntax/c any/c)
-        ;; NOTE: (resolved-value type name-is-dx src-pos)
-        (values (or/c any-number? (syntax/c any/c)) type/c boolean? integer?))
-
-    (let 
-      ;; NOTE: src-pos is used to separate variables with the same name
-     ((fake-src-pos 0)
-      (not-dx-name #f))
-       (cond
-        ((hash-has-key? constants name)
-         (let ((c (hash-ref constants name)))
-           (let ((type (constant-type c)))
-            (if (and (is-array-type? type) (atom-number idx))
-              (let ((idx-atom-number (atom-number idx)))
-                (values ;; Where to store const& in compile time or runtime? not all indexes could be resolved
-                 (rl-vector-ref (constant-array c) idx-atom-number)
-                 (constant-type c)
-                 not-dx-name
-                 fake-src-pos))
-              (values
-                (datum->syntax stx (constant-value c))
-                (constant-type c)
-                not-dx-name
-                fake-src-pos)))))
-        (else
-         (begin
-         (when (equal? ctx #f)
-          (raise-syntax-error #f "name not found" name-stx))
-         (let ((func-name (func-context-.function-name ctx))
-               (var (search-variable
-                     name (func-context-.current-variables ctx))))
-           (cond
-             (var
-              (values (datum->syntax stx (variable-symbol var))
-                      (variable-type var)
-                      (equal? (symbol->string name) dx-name-str-in-current-al)
-                      (variable-src-pos var)))
-             ((equal? name func-name)
-              (let ((func-return-value (func-context-.function-return-value ctx)))
-                (values
-                 (datum->syntax stx func-return-value)
-                 (func-context-.function-return-type ctx)
-                 not-dx-name
-                 fake-src-pos)))
-             (else
-              (let ((arg (search-argument
-                          name (func-context-.current-arguments ctx))))
-                (cond
-                  (arg
-                   (values
-                    (datum->syntax stx (argument-symbol arg))
-                    (argument-type arg)
-                    (equal? (symbol->string name) dx-name-str-in-current-al)
-                    fake-src-pos))
-                  ((and get-name-mode-on (hash-has-key? parameters name))
-                   (values
-                    name-stx
-                    (list 'real (hash-ref parameters name))
-                    not-dx-name
-                    fake-src-pos))
-                  (else
-                   (begin
-                     (pretty-print (func-context-.current-variables ctx))
-                     (raise-syntax-error #f "name not found" name-stx))))))))))))))
 
 (define-syntax (get-value stx)
   (syntax-parse stx
     (get-value:get-value-cls
 
      (with-syntax ((name #'get-value.name))
+       (define tik (current-inexact-milliseconds))
        (let*-values
            (((name-symb) (syntax->datum #'name))
             ;; NOTE: Check enabled modes
@@ -1964,19 +1840,19 @@
             ((name-str) (symbol->string name-symb))
             ((dx-name-str-in-current-al) (syntax-parameter-value #'dx-name-in-current-al))
             ((ctx) (syntax-parameter-value #'func-context))
-            ((idx) (local-expand #'get-value.index 'expression '()))
+            ((idx) (timeit! TIME-TABLE 'local-expand (thunk (local-expand #'get-value.index 'expression '()))))
             ((value type name-is-dx src-pos)
-             (search-name stx ctx name-symb #'name dx-name-str-in-current-al get-name-mode-on idx))
+             (timeit/values! TIME-TABLE 'search-name (thunk (search-name stx ctx name-symb #'name dx-name-str-in-current-al get-name-mode-on idx))))
 
             ((getter-info) (make-getter-info (if #'get-value.index #'get-value.index #'#f)
                                              (if #'get-value.slice-colon #'get-value.slice-colon #'#f)
-                                             (to-landau-type stx type)))
+                                             (timeit! TIME-TABLE 'to-landau-type (thunk (to-landau-type stx type)))))
             ((is-slice is-cell is-var) (values (getter-is-slice? getter-info)
                                                (getter-is-cell? getter-info)
                                                (getter-is-var? getter-info)))
             ((index-start-expanded) (if is-slice 
                                       (if (syntax->datum #'get-value.index-start)
-                                        (local-expand #'get-value.index-start 'expression '())
+                                        (timeit! TIME-TABLE 'local-expand-2 (thunk (local-expand #'get-value.index-start 'expression '())))
                                         0)
                                       #f))
 
@@ -1988,6 +1864,7 @@
                       declared-type))
             ((base-type) type))
          ; (println (format "debug: get-value: dx-name-str-in-current-al: ~a" dx-name-str-in-current-al))
+         (define get-value-head-time (current-inexact-milliseconds))
          (with-syntax* ((value value)
                         (index-start-expanded index-start-expanded)
                         ;; NOTE: nonsense values used to retrieve info in compile time. They should not be in genetated code.
@@ -2002,7 +1879,7 @@
            #| (displayln (format "(list (getter-info-type getter-info) base-type): ~a" |# 
            #|                    (list (getter-info-type getter-info) base-type))) |# 
            #| (displayln (syntax-parameter-value #'func-call-box)) |#
-           (with-syntax-property 'get-value-name name-symb
+           (with-syntax ((r (with-syntax-property 'get-value-name name-symb
              (with-syntax-property 'getter-info getter-info
                (if get-name-mode-on
                  (datum->syntax stx '(_nothing))
@@ -2189,7 +2066,22 @@
 
                    ((list 'slice 'int)
                     (raise-syntax-error #f "int slices are not supported, yet" #'name)))
-                 )))))))))
+                 )))))
+             (define tok (current-inexact-milliseconds))
+             (hash-update! TIME-TABLE 'head-time (lambda (old-time) (fl+ old-time (fl- get-value-head-time tik))))
+             (hash-update! TIME-TABLE 'tail-time (lambda (old-time) (fl+ old-time (fl- tok get-value-head-time))))
+             (displayln (format "get-value head-time: ~a" (hash-ref TIME-TABLE 'head-time 0.0)))
+             (displayln (format "  get-value search-name time: ~a" (hash-ref TIME-TABLE 'search-name 0.0)))
+             #| (displayln (format "    get-value search-constant time: ~a" (hash-ref TIME-TABLE 'search-constant 0.0))) |#
+             (displayln (format "    get-value search-variable time: ~a" (hash-ref TIME-TABLE 'search-variable 0.0)))
+             (displayln (format "    get-value HASH-HIT: ~a" HASH-HIT))
+             #| (displayln (format "    get-value search-argument time: ~a" (hash-ref TIME-TABLE 'search-argument 0.0))) |#
+             (displayln (format "  get-value local-expand time: ~a" (hash-ref TIME-TABLE 'local-expand 0.0)))
+             (displayln (format "  get-value local-expand-2 time: ~a" (hash-ref TIME-TABLE 'local-expand-2 0.0)))
+             (displayln (format "  get-value to-landau-type time: ~a" (hash-ref TIME-TABLE 'to-landau-type 0.0)))
+             (displayln (format "get-value tail-time: ~a" (hash-ref TIME-TABLE 'tail-time 0.0)))
+             #'r
+             )))))))
 
 (begin-for-syntax
  (define/contract
@@ -2244,14 +2136,17 @@
           (loop-var (datum->syntax stx (gensym 'loop_var)))
           (mapped-idx (datum->syntax stx 'mapped_idx))
           (dual-b-derivative
-           (get-derivative-stx 
-             ;; FIXME get-value emited by func-call will fail here
-             ; add function return variables var-decl before expansion
-            (extract
-             (local-expand
-              #`(syntax-parameterize
-                 ((dx-name-in-current-al '#,dx-name-str))
-                 #,assignation-rigth-part) 'expression '())))))
+            ;; FIXME
+            list
+           #| (get-derivative-stx |# 
+           #|   ;; FIXME get-value emited by func-call will fail here |#
+           #|   ; add function return variables var-decl before expansion |#
+           #|  (extract |#
+           #|   (local-expand |#
+           #|    #`(syntax-parameterize |#
+           #|       ((dx-name-in-current-al '#,dx-name-str)) |#
+           #|       #,assignation-rigth-part) 'expression '()))) |#
+           ))
          (datum->syntax
           stx
           `(_for ,#'loop-var 0 ,#'mapping-vec-len
@@ -2391,12 +2286,16 @@
            (dx-name-str_ dx-name-str)
            (slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
            (dual-b-derivative
-            (get-derivative-stx
-             (extract
-              (local-expand
-               #`(syntax-parameterize
-                  ((dx-name-in-current-al '#,dx-name-str))
-                  #,assignation-rigth-part) 'expression '())))))
+            (timeit! TIME-TABLE 'get-derivative-stx
+                     ;; FIXME 
+             (thunk list
+               #| (get-derivative-stx |#
+               #|   (extract |#
+               #|     (local-expand |#
+               #|       #`(syntax-parameterize |#
+               #|           ((dx-name-in-current-al '#,dx-name-str)) |#
+               #|           #,assignation-rigth-part) 'expression '()))) |#
+               ))))
           (if (getter-is-slice? left-hand-getter-info)
             (datum->syntax
              stx
@@ -2476,40 +2375,12 @@
             (else
              (raise-syntax-error #f "variable not found" name)))))))))
 
-;; NOTE: used only when 'ansi-c backend
-(begin-for-syntax
- (define/contract (make-func-ret-assign stx func-call-info-pair-list)
-   (-> (syntax/c any/c) (listof func-call-info-pair/c)
-       (listof (syntax/c any/c)))
-   (if (or (equal? (target-lang TARGET) 'racket) 
-           (empty? func-call-info-pair-list))
-     (list (datum->syntax stx '(_nothing)))
-     (for/list ((p (in-list func-call-info-pair-list)))
-       ;; FIXME: handle cases when return type is 'int or a single 'real value 
-       (let* ((func-ret-symb (func-call-info-pair-.func-ret-symbol p))
-              (fci (func-call-info-pair-.func-call-info p))
-              (name (func-call-info-.name fci))
-              (type (func-call-info-.type fci))
-              (args (func-call-info-.arg-list fci)))
-         (with-syntax
-           ((func-name (datum->syntax stx (string->symbol name)))
-            (type type)
-            (func-ret (datum->syntax stx func-ret-symb))
-            (args-stx args))
-           (datum->syntax
-             stx
-             `(_define-var-with-func-call ,#'func-ret ,#'type
-                                          (_func-call ,#'func-name ,#'func-ret ,#'args-stx)))))))))
 
 (begin-for-syntax
  (define/contract (make-inline-functions-stx stx inlined-function-list)
    (-> (syntax/c any/c) (listof function-inline-semantics-template/c)
        (listof (syntax/c any/c)))
-   (if (or (equal? (target-lang TARGET) 'racket) ;; FIXME should work for racket too
-           (empty? inlined-function-list))
-     (list (datum->syntax stx '(_nothing)))
-
-     (for/list ((inl-f (in-list inlined-function-list)))
+   (for/list ((inl-f (in-list inlined-function-list)))
        (let* ((func-ret-symb (function-inline-semantics-template-.return-symbol inl-f))
               (func-body (function-inline-semantics-template-.body inl-f)) 
               (type (function-inline-semantics-template-.type inl-f))
@@ -2551,11 +2422,30 @@
                 ;; FIXME var-decl will add variable to the current-level, because it is
                 ;; local-expanded without new context
                 (var-decl (type ,#'function-type) ,#'function-name)
-                ,#'func-body))))))))
+                ,#'func-body)))))))
 
 
 (define-syntax (assignation stx)
-  (syntax-parse stx
+  (begin
+    (displayln (format "assignation time: ~a" (hash-ref TIME-TABLE 'assignation 0.0)))
+    (displayln (format "assignation counts: ~a" (hash-ref TIME-TABLE 'assignation-counts 0)))
+    (displayln (format "  'index-exp: ~a" (hash-ref TIME-TABLE 'index-exp 0)))
+    (displayln (format "  'typecheck-mode: ~a" (hash-ref TIME-TABLE 'typecheck-mode  0)))
+    (displayln (format "  'func-ret-assign: ~a" (hash-ref TIME-TABLE 'func-ret-assign 0)))
+    (displayln (format "  'func-ret-assign_: ~a" (hash-ref TIME-TABLE 'func-ret-assign_ 0)))
+    (displayln (format "  'value-exp: ~a" (hash-ref TIME-TABLE 'value-exp 0)))
+    (displayln (format "  'search-left-hand-side-name ~a" (hash-ref TIME-TABLE 'search-left-hand-side-name 0)))
+    (displayln (format "  'left-hand-getter-info ~a" (hash-ref TIME-TABLE 'left-hand-getter-info 0)))
+    (displayln (format "  'get-slice-start-and-range ~a" (hash-ref TIME-TABLE 'get-slice-start-and-range 0)))
+    (displayln (format "  'assignation-tail ~a" (hash-ref TIME-TABLE 'assignation-tail 0)))
+    (displayln (format "    'make-der-assignation-loops-list ~a" (hash-ref TIME-TABLE 'make-der-assignation-loops-list 0)))
+    (displayln (format "    'make-set-all-derivatives-to-zero-list ~a" (hash-ref TIME-TABLE 'make-set-all-derivatives-to-zero-list 0)))
+    (displayln (format "    'make-der-assignation-loops-list/array ~a" (hash-ref TIME-TABLE 'make-der-assignation-loops-list/array 0)))
+    (displayln (format "      'get-derivative-stx ~a" (hash-ref TIME-TABLE 'get-derivative-stx 0)))
+    (displayln (format "      'get-derivative-stx counts: ~a" (hash-ref TIME-TABLE 'get-derivative-stx-counts 0)))
+    (displayln (format "    'make-set-all-derivatives-to-zero/array ~a" (hash-ref TIME-TABLE 'make-set-all-derivatives-to-zero/array 0)))
+    
+    (timeit! TIME-TABLE 'assignation (thunk (syntax-parse stx
 
     (((~literal assignation) name:id
                              getter:getter-cls
@@ -2593,315 +2483,337 @@
                              getter:getter-cls
                              "=" value:expr)
      (let ((func-call-info-pair-list (make-state (list))))
-      (with-syntax* ((index-exp (local-expand #'getter.index 'expression '()))
-                     ;; NOTE: expand to get the value-type. If value-type is dual then local-expand it for each dx
-                     ;; Typecheck mode is also needed because before the first expansion some variables are
-                     ; not declared. For example, inlined function variable. This will cause `name not found`
-                     ; syntax error if expand without typecheck-mode.
-                     (value-exp-typecheck-mode (extract (local-expand
-                                                          #`(syntax-parameterize
-                                                              ((typecheck-mode #t)
-                                                               ;; NOTE: func-call populates this table 
-                                                               (func-call-box #,func-call-info-pair-list))
-                                                              value) 'expression (list))))
+      (with-syntax* 
+        ((index-exp (timeit! TIME-TABLE 'index-exp (thunk (local-expand #'getter.index 'expression '()))))
+         ;; NOTE: expand to get the value-type. If value-type is dual then local-expand it for each dx
+         ;; Typecheck mode is also needed because before the first expansion some variables are
+         ; not declared. For example, inlined function variable. This will cause `name not found`
+         ; syntax error if expand without typecheck-mode.
+         (value-exp-typecheck-mode (timeit! TIME-TABLE 'typecheck-mode 
+                                            (thunk (extract (local-expand
+                                                              #`(syntax-parameterize
+                                                                  ((typecheck-mode #t)
+                                                                   ;; NOTE: func-call populates this table 
+                                                                   (func-call-box #,func-call-info-pair-list))
+                                                                  value) 'expression (list)))))))
 
-                     ;; NOTE: List of inlined functions called in the right-hand side of the assignation. 
-                     (i (begin
-                          (displayln (format "assignation: name: ~a" #'name))
-                          (displayln "func-call-info-pair-list")
-                          (pretty-print (read-state func-call-info-pair-list))))
-                     (funcs-ret-assign_ (make-inline-functions-stx stx (read-state func-call-info-pair-list)))
-                     ;; NOTE: local-expand it to expand var-decl macro genetated for the function's return
-                     ; variable and add it to the current variables
-                     (funcs-ret-assign (for/list ((item (in-list (syntax-e #'funcs-ret-assign_))))
-                                         (local-expand item 'expression '())))
-                   #| (value-exp-value-part (local-expand |#
-                   #|                                #`(syntax-parameterize |#
-                   #|                                   ((expand-value-only #t) |#
-                   #|                                    ;; NOTE: func-call populates this table |# 
-                   #|                                    (func-call-box #,func-call-info-pair-list)) |#
-                   #|                                   value) 'expression (list))) |#
-
-                   ;; NOTE func-call-box is not used because it is already 
-                   ; populated in typecheck-mode expansion. 
-                   (value-exp (extract (local-expand
-                                         #`(syntax-parameterize
-                                             ((expand-value-only #t))
-                                             value) 'expression (list))))
-                   (value-exp-value-part #'value-exp))
-
-       (when (syntax->datum #'getter.index)
-         (unless (equal? (syntax-property #'index-exp 'landau-type) 'int)
-           (raise-syntax-error #f "index must be integer" #'getter.index)))
-       (let*-values
-           (((ctx) (syntax-parameter-value #'func-context))
-            ((name_) (syntax->datum #'name))
-            ((name-str) (symbol->string name_))
-            ((slice-colon_) (syntax->datum #'getter.slice-colon))
-            ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
-            ((symbol full-type src-pos) (search-left-hand-side-name stx ctx #'name))
-            ((left-hand-getter-info) (make-getter-info #'getter.index
-                                                       #'getter.slice-colon
-                                                       (to-landau-type stx full-type)))
-            ((name-vs) (var-symbol name-str src-pos))
-            ((left-type) (car full-type))
-            ((al-index-name_) 'al_index_name_symbol)
-            ((maybe-array-range) (datum->syntax stx (cadr full-type)))
-            ((index-start-expanded_ slice-range)
-             (get-slice-start-and-range 
-              stx 
-              slice-colon_ 
-              (if slice-colon_ #'getter.index-start #'#f) (if slice-colon_ #'getter.index-end #'#f) maybe-array-range)))
-         (when (and (equal? left-type 'int)
-                    (equal? value-type 'real))
-           (raise-syntax-error #f "assignation of real to integer is not allowed" stx))
-         (with-syntax ((sym (datum->syntax stx symbol))
-                       (type_ value-type)
-                       (al-index-symb (datum->syntax stx al-index-name_))
-                       (index-start-expanded_ index-start-expanded_)
-                       (slice-range slice-range)
-                       )
-           (displayln "FIXME: make sure that funcs-ret-assign should be always before set-all-derivatives-to-zero")
-           (displayln "FIXME: make sure that single function return variable is enough for sequential calls to one funcition")
-           (cond
-             ((getter-is-var? left-hand-getter-info)
-              ;; NOTE: Non-array case
-              (cond
-                ((equal? left-type 'dual-l)
-                 (match value-type
-                   ('dual-b
-                    (let ((dx-names (check-result
-                                     stx 
-                                     (format "bug: assignation: need-derivatives-table-GLOBAL: no value for key: ~a" name-str)
-                                     (ndt-get-dx-names (func-context-.need-derivatives-table ctx) name-vs))))
-                      (with-syntax*
-                        ((dual-b-value #'value-exp-value-part)
-                         (assertion-loops-list
-                          (make-der-assignation-loops-list stx ctx name-vs dx-names #'value #'al-index-symb)
-                          ))
-                        (datum->syntax stx
-                                       `(expr-body
-                                          (_begin ,@#'funcs-ret-assign)
-                                          (_begin ,@#'assertion-loops-list)
-                                          (_set! ,#'sym ,#'dual-b-value))))))
-                   ('real
-                    (with-syntax
-                      ((set-all-derivatives-to-zero
-                        (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)
-                        ))
-                      (datum->syntax stx
-                                     `(expr-body
-                                        (_begin ,@#'funcs-ret-assign)
-                                        (_begin ,@#'set-all-derivatives-to-zero)
-                                        (_set! ,#'sym ,#'value-exp-value-part)))))
-                   ('int
-                    (with-syntax
-                      ((set-all-derivatives-to-zero
-                        (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)
-                        ))
-                      (datum->syntax stx
-                                     `(expr-body
-                                        (_begin ,@#'funcs-ret-assign)
-                                        (_begin ,@#'set-all-derivatives-to-zero)
-                                        (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part))))))))
-                ;; NOTE: real variable that is not in need-only-value-set-GLOBAL is not used
-                ((equal? left-type 'real)
-                 (match value-type
-                        ;; FIXME: assignation to unused variable
-                        ;  ((and 
-                        ;    (not (set-member? (func-context-.need-only-value-set ctx) name-str))
-                        ;    (not (equal? name_ func-name)))
-                        ;   #'#f)
-                   ((or 'dual-b 'real)
-                    (datum->syntax stx
-                                   `(expr-body
-                                      (_begin ,@#'funcs-ret-assign)
-                                      (_set! ,#'sym ,#'value-exp-value-part))))
-                   ('int
-                    (datum->syntax stx
-                                   `(expr-body
-                                      (_begin ,@#'funcs-ret-assign)
-                                      (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part)))))))
-                ;; NOTE: 'int <- 'int | 'real | 'dual-b
-                (else
-                 (match value-type
-                   ('int
-                    (datum->syntax stx
-                                   `(expr-body
-                                      (_begin ,@#'funcs-ret-assign)
-                                      (_set! ,#'sym ,#'value-exp-value-part))))
-                   (_
-                    (raise-syntax-error
-                     #f (format "assignation to 'int is expected to be 'int. Given right-hand side type is ~a" value-type)
-                     stx))))))
-             ;; NOTE: Array case
-             ((equal? left-type 'dual-l)
-              (begin
-                (unless (var-symbol/c name-vs)
-                  (error "2569"))
-                (match (list (getter-info-type left-hand-getter-info) "<-" value-type)
-                
-                ((or (list 'slice "<-" 'dual-b)
-                     (list 'slice "<-" (list 'dual-b _))
-                     (list 'cell  "<-" 'dual-b))
-                 (let ((dx-names
-                        (cond
-                          ((ndt-member?
-                            (func-context-.need-derivatives-table ctx) name-vs)
-                           (ndt-get-dx-names (func-context-.need-derivatives-table ctx) name-vs))
-                          (else
-                           (raise-syntax-error
-                            #f
-                             (format "bug: assignation: need-derivatives-table: no value for key: ~a" name-vs) stx)))))
-                   (with-syntax*
-                     ((dual-b-value #'value-exp-value-part)
-                      (assertion-loops-list
-                       (make-der-assignation-loops-list/array stx
-                                                              ctx
-                                                              name-vs
-                                                              dx-names
-                                                              #'value
-                                                              #'al-index-symb
-                                                              left-hand-getter-info
-                                                              #'slice-range
-                                                              #'index-start-expanded_
-                                                              #'index-exp)))
-                     (if (getter-is-slice? left-hand-getter-info)
-                       (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
-                         (datum->syntax stx
-                                        `(expr-body
-                                          (_begin ,@#'funcs-ret-assign)
-                                          (_begin ,@#'assertion-loops-list)
-                                          (_for ,#'slice-idx 0 ,#'slice-range
-                                                 (_vector-set! ,#'sym (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)) ,#'dual-b-value)))))
-                       (datum->syntax stx
-                                      `(expr-body
-                                         (_begin ,@#'funcs-ret-assign)
-                                         (_begin ,@#'assertion-loops-list)
-                                         (_vector-set! ,#'sym ,#'index-exp ,#'dual-b-value)))))))
-                
-                ((or (list 'slice "<-" 'real)
-                     (list 'slice "<-" (list 'real _))
-                     (list 'cell  "<-" 'real))
-                 (with-syntax
-                   ((set-all-derivatives-to-zero 
-                     (make-set-all-derivatives-to-zero/array stx
-                                                             ctx
-                                                             name-vs
-                                                             #'al-index-symb
-                                                             left-hand-getter-info
-                                                             #'slice-range
-                                                             #'index-start-expanded_
-                                                             #'index-exp)
-                     ))
-                   (if (getter-is-slice? left-hand-getter-info)
-                     (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
-                       (datum->syntax stx
-                                      `(expr-body
-                                         (_begin ,@#'funcs-ret-assign)
-                                         (_begin ,@#'set-all-derivatives-to-zero)
-                                         (_for ,#'slice-idx 0 ,#'slice-range
-                                               (_vector-set! ,#'sym (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)) ,#'value)))))
-                     (datum->syntax stx
-                                    `(_local
-                                       (expr-body
-                                         (_begin ,@#'funcs-ret-assign)
-                                         (_begin ,@#'set-all-derivatives-to-zero)
-                                         (_vector-set! ,#'sym ,#'index-exp ,#'value)))))))
-                
-                ((or (list 'slice "<-" 'int)
-                     (list 'cell  "<-" 'int))
-                 (with-syntax
-                   ((set-all-derivatives-to-zero
-                     (make-set-all-derivatives-to-zero/array stx 
-                                                             ctx
-                                                             name-vs
-                                                             #'al-index-symb
-                                                             left-hand-getter-info
-                                                             #'slice-range
-                                                             #'index-start-expanded_
-                                                             #'index-exp)
-                     ))
-                   (if (getter-is-slice? left-hand-getter-info)
-                     (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
-                       (datum->syntax stx
-                                      `(expr-body
-                                         (_begin ,@#'funcs-ret-assign)
-                                         (_begin ,@#'assertion-loops-list)
-                                         (_for ,#'slice-idx 0 ,#'slice-range
-                                               (_vector-set! 
-                                                 ,#'sym 
-                                                 (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)) 
-                                                 (_exact->inexact ,#'value))))))
-                     (datum->syntax stx
-                                    `(expr-body
-                                       (_begin ,@#'funcs-ret-assign)
-                                       (_begin ,@#'set-all-derivatives-to-zero)
-                                       (_vector-set! ,#'sym ,#'index-exp (_exact->inexact ,#'value))))))))))
-             
-             ((equal? left-type 'real)
-              (if (getter-is-slice? left-hand-getter-info)
-                ;; NOTE: lvalue is a slice
-                (with-syntax 
-                  ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
-                  (cond
-                    ;; FIXME: assingation to unused variable
-                    ; ((and (not (set-member? (func-context-.need-only-value-set ctx) name-str))
-                    ;       (not (equal? name_ func-name)))
-                    ;  (with-syntax ((name-str name-str))
-                    ;     (syntax/loc stx 
-                    ;       (begin
-                    ;        (flvector-set! sym index-exp value-exp)))))
-                    ((or (equal? value-type 'dual-b)
-                         (is-slice-of-type 'dual-b value-type)
-                         (equal? value-type 'real)
-                         (is-slice-of-type 'real value-type))
-                     (datum->syntax stx ;; FIXME bug: in-range cause a parse error 
-                                    `(_local
-                                      (expr-body
-                                       (_begin ,@#'funcs-ret-assign)
-                                       (_for ,#'slice-idx 0 ,#'slice-range
-                                              (_vector-set! ,#'sym
-                                                             (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))
-                                                             ,#'value-exp-value-part))))))
-                    ((equal? value-type 'int)
-                     (datum->syntax stx
-                                    `(_local
-                                      (expr-body
-                                        (_begin ,@#'funcs-ret-assign)
-                                        (_for ,#'slice-idx 0 ,#'slice-range
-                                              (_vector-set! ,#'sym
-                                                            (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))
-                                                            (_exact->inexact ,#'value-exp-value-part)))))))))
-                ;; NOTE: lvalue is not a slice
-                (cond
-                  ;; FIXME: assingation to unused variable
-                  ; ((and (not (set-member? (func-context-.need-only-value-set ctx) name-str))
-                  ;       (not (equal? name_ func-name)))
-                  ;  (with-syntax ((name-str name-str))
-                  ;     (syntax/loc stx 
-                  ;       (begin
-                  ;        (flvector-set! sym index-exp value-exp)))))
-                  
-                  ((or (equal? value-type 'dual-b)
+        ;; NOTE: List of inlined functions called in the right-hand side of the assignation. 
+        (define inlined-functions (timeit! TIME-TABLE 'func-ret-assign_
+                                           (thunk (make-inline-functions-stx stx (read-state func-call-info-pair-list)))))
+        ;; NOTE: local-expand it to expand var-decl macro genetated for the function's return
+        ; variable and add it to the current variables
+        (define funcs-ret-assign 
+          (timeit! TIME-TABLE 'func-ret-assign
+                   (thunk (for/list ((item (in-list inlined-functions)))
+                            (syntax-parse item
+                              ((_begin func-var-decl body)
+                               (with-syntax
+                                 ((func-var-decl-exp (local-expand #'func-var-decl 'expression (list #'define)))
+                                  (body-exp (local-expand #'body 'expression (list #'define))))
+                                 (datum->syntax stx `(_begin ,#'func-var-decl-exp ,#'body-exp))
+                                 )))))))
+        (when (syntax->datum #'getter.index)
+          (unless (equal? (syntax-property #'index-exp 'landau-type) 'int)
+            (raise-syntax-error #f "index must be integer" #'getter.index)))
+        (with-syntax*
+          (
+           ;; NOTE func-call-box is not used because it is already 
+           ; populated in typecheck-mode expansion. 
+           (value-exp (timeit! TIME-TABLE 'value-exp 
+                               (thunk (match (target-lang TARGET)
+                                        ('ansi-c
+                                         (extract (local-expand
+                                                 #`(syntax-parameterize
+                                                     ((expand-value-only #t))
+                                                     value) 'expression (list))))
+                                        ('racket #'(void)
+                                         #| (local-expand |#
+                                         #|           #`(syntax-parameterize |#
+                                         #|               ((expand-value-only #t)) |#
+                                         #|               (begin |#
+                                         #|                 ;; FIXME inlined function's arguments are unbond |#
+                                         #|                 #,@funcs-ret-assign |#
+                                         #|                 value)) 'expression (list #'begin)) |#
+                                         )
+                                        ))))
+           (value-exp-value-part #'value-exp))
+          (let*-values
+            (((ctx) (syntax-parameter-value #'func-context))
+             ((name_) (syntax->datum #'name))
+             ((name-str) (symbol->string name_))
+             ((slice-colon_) (syntax->datum #'getter.slice-colon))
+             ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
+             ((symbol full-type src-pos) (timeit/values! TIME-TABLE 'search-left-hand-side-name 
+                                                         (thunk (search-left-hand-side-name stx ctx #'name))))
+             ((left-hand-getter-info) (timeit! TIME-TABLE 'left-hand-getter-info
+                                               (thunk (make-getter-info #'getter.index
+                                                                        #'getter.slice-colon
+                                                                        (to-landau-type stx full-type)))))
+             ((name-vs) (var-symbol name-str src-pos))
+             ((left-type) (car full-type))
+             ((al-index-name_) 'al_index_name_symbol)
+             ((maybe-array-range) (datum->syntax stx (cadr full-type)))
+             ((index-start-expanded_ slice-range)
+              (timeit/values! TIME-TABLE 'get-slice-start-and-range 
+                              (thunk (get-slice-start-and-range 
+                                       stx 
+                                       slice-colon_ 
+                                       (if slice-colon_ #'getter.index-start #'#f) (if slice-colon_ #'getter.index-end #'#f) maybe-array-range)))))
+            (when (and (equal? left-type 'int)
                        (equal? value-type 'real))
-                   (datum->syntax stx
-                                  `(expr-body
-                                     (_begin ,@#'funcs-ret-assign)
-                                     (_vector-set! ,#'sym ,#'index-exp ,#'value-exp-value-part))))
-                  ((equal? value-type 'int)
-                   (datum->syntax stx
-                                  `(expr-body
-                                    (_local (_begin ,@#'funcs-ret-assign))
-                                    (_vector-set! ,#'sym ,#'index-exp (_exact->inexact ,#'value-exp-value-part)))))
-                  ((is-slice? value-type)
-                   (raise-syntax-error #f "Bug: assignation: no-a-slice <- slice" #'name)))))
-             ((equal? left-type 'int)
-              (raise-syntax-error #f "int arrays are not supported" #'name))
-             (else (raise-syntax-error 
-                    #f 
-                     (format "bug: assignation left-types are not matched: ~a <- ~a" left-type value-type)
-                    #'name))))))))))
+              (raise-syntax-error #f "assignation of real to integer is not allowed" stx))
+            (timeit! 
+              TIME-TABLE 
+              'assignation-tail 
+              (thunk 
+                (with-syntax 
+                  ((sym (datum->syntax stx symbol))
+                   (type_ value-type)
+                   (al-index-symb (datum->syntax stx al-index-name_))
+                   (index-start-expanded_ index-start-expanded_)
+                   (slice-range slice-range)
+                   )
+                  (displayln "FIXME: make sure that funcs-ret-assign should be always before set-all-derivatives-to-zero")
+                  (displayln "FIXME: make sure that single function return variable is enough for sequential calls to one funcition")
+                  (cond
+                    ((getter-is-var? left-hand-getter-info)
+                     ;; NOTE: Non-array case
+                     (cond
+                       ((equal? left-type 'dual-l)
+                        (match value-type
+                          ('dual-b
+                           (let ((dx-names (check-result
+                                             stx 
+                                             (format "bug: assignation: need-derivatives-table-GLOBAL: no value for key: ~a" name-str)
+                                             (ndt-get-dx-names (func-context-.need-derivatives-table ctx) name-vs))))
+                             (with-syntax*
+                               ((dual-b-value #'value-exp-value-part)
+                                (assertion-loops-list
+                                  (timeit! TIME-TABLE 'make-der-assignation-loops-list (thunk (make-der-assignation-loops-list stx ctx name-vs dx-names #'value #'al-index-symb)))
+                                  ))
+                               (datum->syntax stx
+                                              `(expr-body
+                                                 (_begin ,@funcs-ret-assign)
+                                                 (_begin ,@#'assertion-loops-list)
+                                                 (_set! ,#'sym ,#'dual-b-value))))))
+                          ('real
+                           (with-syntax
+                             ((set-all-derivatives-to-zero
+                                (timeit! TIME-TABLE 'make-set-all-derivatives-to-zero-list (thunk (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)))
+                                ))
+                             (datum->syntax stx
+                                            `(expr-body
+                                               (_begin ,@funcs-ret-assign)
+                                               (_begin ,@#'set-all-derivatives-to-zero)
+                                               (_set! ,#'sym ,#'value-exp-value-part)))))
+                          ('int
+                           (with-syntax
+                             ((set-all-derivatives-to-zero
+                                (timeit! TIME-TABLE 'make-set-all-derivatives-to-zero-list (thunk (make-set-all-derivatives-to-zero-list stx ctx name-vs #'al-index-symb)))
+                                ))
+                             (datum->syntax stx
+                                            `(expr-body
+                                               (_begin ,@funcs-ret-assign)
+                                               (_begin ,@#'set-all-derivatives-to-zero)
+                                               (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part))))))))
+                       ;; NOTE: real variable that is not in need-only-value-set-GLOBAL is not used
+                       ((equal? left-type 'real)
+                        (match value-type
+                          ;; FIXME: assignation to unused variable
+                          ;  ((and 
+                          ;    (not (set-member? (func-context-.need-only-value-set ctx) name-str))
+                          ;    (not (equal? name_ func-name)))
+                          ;   #'#f)
+                          ((or 'dual-b 'real)
+                           (datum->syntax stx
+                                          `(expr-body
+                                             (_begin ,@funcs-ret-assign)
+                                             (_set! ,#'sym ,#'value-exp-value-part))))
+                          ('int
+                           (datum->syntax stx
+                                          `(expr-body
+                                             (_begin ,@funcs-ret-assign)
+                                             (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part)))))))
+                       ;; NOTE: 'int <- 'int | 'real | 'dual-b
+                       (else
+                         (match value-type
+                           ('int
+                            (datum->syntax stx
+                                           `(expr-body
+                                              (_begin ,@funcs-ret-assign)
+                                              (_set! ,#'sym ,#'value-exp-value-part))))
+                           (_
+                             (raise-syntax-error
+                               #f (format "assignation to 'int is expected to be 'int. Given right-hand side type is ~a" value-type)
+                               stx))))))
+                    ;; NOTE: Array case
+                    ((equal? left-type 'dual-l)
+                     (begin
+                       (unless (var-symbol/c name-vs)
+                         (error "2569"))
+                       (match (list (getter-info-type left-hand-getter-info) "<-" value-type)
+
+                         ((or (list 'slice "<-" 'dual-b)
+                              (list 'slice "<-" (list 'dual-b _))
+                              (list 'cell  "<-" 'dual-b))
+                          (let ((dx-names
+                                  (cond
+                                    ((ndt-member?
+                                       (func-context-.need-derivatives-table ctx) name-vs)
+                                     (ndt-get-dx-names (func-context-.need-derivatives-table ctx) name-vs))
+                                    (else
+                                      (raise-syntax-error
+                                        #f
+                                        (format "bug: assignation: need-derivatives-table: no value for key: ~a" name-vs) stx)))))
+                            (with-syntax*
+                              ((dual-b-value #'value-exp-value-part)
+                               (assertion-loops-list
+                                 (timeit! TIME-TABLE 'make-der-assignation-loops-list/array (thunk (make-der-assignation-loops-list/array stx
+                                                                                                                                          ctx
+                                                                                                                                          name-vs
+                                                                                                                                          dx-names
+                                                                                                                                          #'value
+                                                                                                                                          #'al-index-symb
+                                                                                                                                          left-hand-getter-info
+                                                                                                                                          #'slice-range
+                                                                                                                                          #'index-start-expanded_
+                                                                                                                                          #'index-exp)))))
+                              (if (getter-is-slice? left-hand-getter-info)
+                                (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
+                                              (datum->syntax stx
+                                                             `(expr-body
+                                                                (_begin ,@funcs-ret-assign)
+                                                                (_begin ,@#'assertion-loops-list)
+                                                                (_for ,#'slice-idx 0 ,#'slice-range
+                                                                      (_vector-set! ,#'sym (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)) ,#'dual-b-value)))))
+                                (datum->syntax stx
+                                               `(expr-body
+                                                  (_begin ,@funcs-ret-assign)
+                                                  (_begin ,@#'assertion-loops-list)
+                                                  (_vector-set! ,#'sym ,#'index-exp ,#'dual-b-value)))))))
+
+                         ((or (list 'slice "<-" 'real)
+                              (list 'slice "<-" (list 'real _))
+                              (list 'cell  "<-" 'real))
+                          (with-syntax
+                            ((set-all-derivatives-to-zero 
+                               (timeit! TIME-TABLE 'make-set-all-derivatives-to-zero/array (thunk (make-set-all-derivatives-to-zero/array stx
+                                                                                                                                          ctx
+                                                                                                                                          name-vs
+                                                                                                                                          #'al-index-symb
+                                                                                                                                          left-hand-getter-info
+                                                                                                                                          #'slice-range
+                                                                                                                                          #'index-start-expanded_
+                                                                                                                                          #'index-exp)))
+                               ))
+                            (if (getter-is-slice? left-hand-getter-info)
+                              (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
+                                            (datum->syntax stx
+                                                           `(expr-body
+                                                              (_begin ,@funcs-ret-assign)
+                                                              (_begin ,@#'set-all-derivatives-to-zero)
+                                                              (_for ,#'slice-idx 0 ,#'slice-range
+                                                                    (_vector-set! ,#'sym (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)) ,#'value)))))
+                              (datum->syntax stx
+                                             `(_local
+                                                (expr-body
+                                                  (_begin ,@funcs-ret-assign)
+                                                  (_begin ,@#'set-all-derivatives-to-zero)
+                                                  (_vector-set! ,#'sym ,#'index-exp ,#'value)))))))
+
+                         ((or (list 'slice "<-" 'int)
+                              (list 'cell  "<-" 'int))
+                          (with-syntax
+                            ((set-all-derivatives-to-zero
+                               (timeit! TIME-TABLE 'make-set-all-derivatives-to-zero/array (thunk (make-set-all-derivatives-to-zero/array stx 
+                                                                                                                                          ctx
+                                                                                                                                          name-vs
+                                                                                                                                          #'al-index-symb
+                                                                                                                                          left-hand-getter-info
+                                                                                                                                          #'slice-range
+                                                                                                                                          #'index-start-expanded_
+                                                                                                                                          #'index-exp)))
+                               ))
+                            (if (getter-is-slice? left-hand-getter-info)
+                              (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
+                                            (datum->syntax stx
+                                                           `(expr-body
+                                                              (_begin ,@funcs-ret-assign)
+                                                              (_begin ,@#'assertion-loops-list)
+                                                              (_for ,#'slice-idx 0 ,#'slice-range
+                                                                    (_vector-set! 
+                                                                      ,#'sym 
+                                                                      (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)) 
+                                                                      (_exact->inexact ,#'value))))))
+                              (datum->syntax stx
+                                             `(expr-body
+                                                (_begin ,@funcs-ret-assign)
+                                                (_begin ,@#'set-all-derivatives-to-zero)
+                                                (_vector-set! ,#'sym ,#'index-exp (_exact->inexact ,#'value))))))))))
+
+                    ((equal? left-type 'real)
+                     (if (getter-is-slice? left-hand-getter-info)
+                       ;; NOTE: lvalue is a slice
+                       (with-syntax 
+                         ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
+                         (cond
+                           ;; FIXME: assignation to unused variable
+                           ; ((and (not (set-member? (func-context-.need-only-value-set ctx) name-str))
+                           ;       (not (equal? name_ func-name)))
+                           ;  (with-syntax ((name-str name-str))
+                           ;     (syntax/loc stx 
+                           ;       (begin
+                           ;        (flvector-set! sym index-exp value-exp)))))
+                           ((or (equal? value-type 'dual-b)
+                                (is-slice-of-type 'dual-b value-type)
+                                (equal? value-type 'real)
+                                (is-slice-of-type 'real value-type))
+                            (datum->syntax stx ;; FIXME bug: in-range cause a parse error 
+                                           `(_local
+                                              (expr-body
+                                                (_begin ,@funcs-ret-assign)
+                                                (_for ,#'slice-idx 0 ,#'slice-range
+                                                      (_vector-set! ,#'sym
+                                                                    (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))
+                                                                    ,#'value-exp-value-part))))))
+                           ((equal? value-type 'int)
+                            (datum->syntax stx
+                                           `(_local
+                                              (expr-body
+                                                (_begin ,@funcs-ret-assign)
+                                                (_for ,#'slice-idx 0 ,#'slice-range
+                                                      (_vector-set! ,#'sym
+                                                                    (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))
+                                                                    (_exact->inexact ,#'value-exp-value-part)))))))))
+                       ;; NOTE: lvalue is not a slice
+                       (cond
+                         ;; FIXME: assignation to unused variable
+                         ; ((and (not (set-member? (func-context-.need-only-value-set ctx) name-str))
+                         ;       (not (equal? name_ func-name)))
+                         ;  (with-syntax ((name-str name-str))
+                         ;     (syntax/loc stx 
+                         ;       (begin
+                         ;        (flvector-set! sym index-exp value-exp)))))
+
+                         ((or (equal? value-type 'dual-b)
+                              (equal? value-type 'real))
+                          (datum->syntax stx
+                                         `(expr-body
+                                            (_begin ,@funcs-ret-assign)
+                                            (_vector-set! ,#'sym ,#'index-exp ,#'value-exp-value-part))))
+                         ((equal? value-type 'int)
+                          (datum->syntax stx
+                                         `(expr-body
+                                            (_local (_begin ,@funcs-ret-assign))
+                                            (_vector-set! ,#'sym ,#'index-exp (_exact->inexact ,#'value-exp-value-part)))))
+                         ((is-slice? value-type)
+                          (raise-syntax-error #f "Bug: assignation: no-a-slice <- slice" #'name)))))
+                    ((equal? left-type 'int)
+                     (raise-syntax-error #f "int arrays are not supported" #'name))
+                    (else (raise-syntax-error 
+                            #f 
+                            (format "bug: assignation left-types are not matched: ~a <- ~a" left-type value-type)
+                            #'name))))))))))))))))
 
 (define-syntax (expr-body stx)
   (syntax-parse stx
@@ -2990,6 +2902,8 @@
                          [return-stx (datum->syntax
                                       stx
                                       `(_for ,#'symm ,#'start-val ,#'stop-val ,#'pat.body))])
+            (displayln (format "symm: ~a; name: ~a" #'symm #'name))
+            (displayln (format "syntax-binding-set: ~a" (syntax-binding-set)))
             (throw-if-not-int #'start-val "Only 'int allowed for ranges")
             (throw-if-not-int #'stop-val "Only 'int allowed for ranges")
             (quasisyntax/loc stx

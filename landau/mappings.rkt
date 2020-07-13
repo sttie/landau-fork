@@ -1,7 +1,7 @@
 #lang racket
 #| INFO: Routines for generating direct and inverse mappings |#
 (require 
-  (only-in "common-for-syntax.rkt" vector->carray fxvector->vector)
+  (only-in "common-for-syntax.rkt" vec->fxvec vector->carray fxvector->vector)
   (only-in "combinators.rkt" c-define-array)
   (for-syntax racket/syntax
               racket/base

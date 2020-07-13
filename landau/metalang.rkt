@@ -195,7 +195,7 @@
 
 (define-syntax (_for stx)
   (syntax-parse stx
-    ((_for0 var-name:id start end body)
+    ((_for var-name:id start end body)
          (match (target-lang TARGET)
            ('racket
             (syntax/loc stx
