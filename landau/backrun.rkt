@@ -381,8 +381,8 @@
                                 'expression '())
                               #f)))
          ;;FIXME pass getter-info as syntax property?
-         (displayln "FIXME: check getter in get-value") 
-         (displayln (format "~a get-value: name: ~a ~a" (syntax-line #'name) name-str (syntax->datum stx)))
+         #| (displayln "FIXME: check getter in get-value") |# 
+         #| (displayln (format "~a get-value: name: ~a ~a" (syntax-line #'name) name-str (syntax->datum stx))) |#
       ;; FIXME Do not fail array get-value without index of slice. Array can be passed to a function: f(arr)
        #| (check-proper-getter |# 
        #|  (if (attribute index) #'index #'#f) (attribute slice-colon) array-range index-expanded name-str stx) |#
@@ -613,7 +613,7 @@
                              (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                              (rvalue-outer-prod-range #'value-slice-range)
                              (r-value-type value-type))
-                            (displayln (format "slice <- value / var: ~a" ) )
+                            #| (displayln (format "slice <- value / var: ~a" ) ) |#
                             (quasisyntax/loc
                               stx
                               (begin
@@ -1028,7 +1028,6 @@
                             expanded-range-dx 
                             dx-idx-expanded 
                             name-2-dat stx)
-       (println "der-annot")
        (let*-values (((v0 v1 v2 df-name-src-pos) (search-name-backrun stx #'df-name))
                     ;  ((v3 v4 v5 dx-name-src-pos) (search-name-backrun stx #'dx-name))
                      ((dx-index-start-stx dx-slice-range dx-index-range-checks)
@@ -1194,7 +1193,7 @@
                       (lvalue-outer-prod-range #'(fx* df-slice-range dx-slice-range))
                       (r-value-exp (local-expand #'der-value 'expression '())))
                      (define r-value-type (syntax-property #'r-value-exp 'landau-type))
-                     (displayln (format "r-value-type ~a" r-value-type))
+                     #| (displayln (format "r-value-type ~a" r-value-type)) |#
                    (quasisyntax/loc
                        stx
                      (begin
@@ -1547,10 +1546,10 @@
                              (func-is-called-inside-argument #t))
                             par) 'expression '()))))))
 
-             (displayln "FIXME: check if funciton local var are in der-table if they need a derivative after inlining")
+             #| (displayln "FIXME: check if funciton local var are in der-table if they need a derivative after inlining") |#
 
              ;; NOTE: inline funciton body and bind it's parameters to the passed arguments
-             (displayln "FIXME: generate normalizied arg variables in semantics.rkt")
+             #| (displayln "FIXME: generate normalizied arg variables in semantics.rkt") |#
              (define current-func-arg-normalizations (make-state (list)))
              (define module-funcs-table (syntax-parameter-value #'module-funcs-table-parameter))
              (define args 
@@ -1608,8 +1607,8 @@
                  (match par
                    ((list par-vs _) par-vs))))
 
-             (displayln (format "args-types: ~a" args-types))
-             (displayln (format "pars-types: ~a" (function-inline-template-.parameters func-template)))
+             #| (displayln (format "args-types: ~a" args-types)) |#
+             #| (displayln (format "pars-types: ~a" (function-inline-template-.parameters func-template))) |#
 
              (define (landau-type->string t)
                (match t
@@ -2027,7 +2026,7 @@
                               ((list b (list n)) (values b n))
                               (b (values b #f))))
 
-         (displayln (format "value-type ~a value-base-type ~a value-range ~a" value-type value-base-type value-range))
+         #| (displayln (format "value-type ~a value-base-type ~a value-range ~a" value-type value-base-type value-range)) |#
 
          ;; NOTE: Indexes are resolved at zeroth pass
          (let* ((err-msg "index must be an integer expression of constants and loop variables")
@@ -2340,7 +2339,7 @@
          
 ;; FIXME: check variable shadowing other functions names
 (define-for-syntax (check-duplicate-variable-name name stx-name)
-  (displayln "FIXME: commented argument shadowing check")
+  #| (displayln "FIXME: commented argument shadowing check") |#
   (when (search-variable name (syntax-parameter-value #'current-variables))
     (raise-syntax-error #f "duplicate variable declaration" stx-name))
   (when (hash-has-key? constants name)

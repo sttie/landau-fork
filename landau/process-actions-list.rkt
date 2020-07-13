@@ -361,17 +361,17 @@
          (available-dx-table (make-hash))
          (forward-flat (reverse rev-flat))
          (deps-set (mutable-set)))
-        (displayln "FIXME: check that der-table and real-vars-table are generated correctly")
-        (displayln "forward-flat:")
-        (pretty-print forward-flat)
+        #| (displayln "FIXME: check that der-table and real-vars-table are generated correctly") |#
+        #| (displayln "forward-flat:") |#
+        #| (pretty-print forward-flat) |#
         ;; NOTE: populate table with function code for the future inlining, when this function is called
         #| (pretty-print forward-flat) |#
         (process-forward! forward-flat available-dx-table deps-set real-vars-table)
         (process-reverse! rev-flat available-dx-table deps-set der-table discard-table)
-        (displayln "der-table:") 
-        (pretty-print der-table)
-        (displayln "real-vars-table")
-        (pretty-print real-vars-table)
+        #| (displayln "der-table:") |# 
+        #| (pretty-print der-table) |#
+        #| (displayln "real-vars-table") |#
+        #| (pretty-print real-vars-table) |#
         (values der-table dx-names-set real-vars-table)))))
 
 

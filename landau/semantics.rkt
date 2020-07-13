@@ -661,7 +661,6 @@
         (hash-ref _bindings 
                   (syntax->datum _name)
                   #f))
-      (displayln (format "rebind-name: ~a -> ~a" _name new-binding))
       (match new-binding
         ;; NOTE: if there is no such name in bindings, then
         ; the name is either a constant or a local variable's name and it should be
@@ -687,7 +686,7 @@
               (cond 
                 ((atom-number/c new-binding)
                  (begin
-                   (displayln "FIXME: string->number is rounding precision to fit 64bit")
+                   #| (displayln "FIXME: string->number is rounding precision to fit 64bit") |#
                    `(number ,(string->number (to-string new-binding)))))
                 (else 
                   (with-syntax ((new-name new-binding))
@@ -801,7 +800,6 @@
 
         (((~literal func-call) function-name "(" ({~literal parlist} par*:par-spec ...) ")")
          (begin
-           (displayln (format "func-call: ~a args: ~a" #'function-name #'(list par* ...)))
            (datum->syntax template 
                         `(func-call 
                            ,#'function-name 
@@ -821,7 +819,6 @@
 
         ((parent-pat . children-pat)
          (begin
-           (displayln (format "parent-pat: ~a children-pat: ~a" #'parent-pat #'children-pat))
            (with-syntax 
            ((binded-stx 
               (for/list ((child (in-list (syntax-e #'children-pat))))
@@ -1015,9 +1012,6 @@
                                            (define arg-name (syntax-property arg 'get-value-name))
                                            ;; FIXME pass atom number as a property
                                            (define arg-atom-number (atom-number arg))
-                                           (displayln (format "unexpanded-arg: ~a" unexpanded-arg))
-                                           (displayln
-                                             (format "arg: ~a arg-name: ~a arg-atom-number: ~a" arg arg-name arg-atom-number))
                                            (match (list arg-name arg-atom-number)
                                              ((list #f #f)
                                               (raise-syntax-error 
@@ -1031,10 +1025,9 @@
                                                 "bug: function's argument has a name and resolved 
                                                 to a numerical constant" stx))))))
 
-               (displayln (format "func-argument-names: ~a" func-argument-names))
                (define func-template (hash-ref MODULE-FUNCS-TABLE (string->symbol func-str)))
-               (displayln 
-                 "FIXME: Normalize arguments so their expressions are resolved to a single variable or constant.")
+               #| (displayln |# 
+               #|   "FIXME: Normalize arguments so their expressions are resolved to a single variable or constant.") |#
                (define func-parameters-symbols func-argument-names)
                (define bindings (make-hash (zip cons 
                                                 (function-inline-semantics-template-.parameters func-template)
@@ -1043,15 +1036,15 @@
                           (syntax->datum #'function-name)
                           (syntax->datum #'function-return-variable))
 
-               (displayln bindings)
+               #| (displayln bindings) |#
 
                (define inlined-function (bind-parameters-to-arguments 
                                           func-str
                                           (function-inline-semantics-template-.body func-template)
                                           bindings))
 
-               (displayln "inlined-function")
-               (pretty-print (syntax->datum inlined-function))
+               #| (displayln "inlined-function") |#
+               #| (pretty-print (syntax->datum inlined-function)) |#
 
                ;; NOTE: Update pairs-list. It is processed in assignation macro
                (unless (equal? func-call-box-value 'func-call-box-not-set)
@@ -1366,8 +1359,6 @@
 
                 (arg-decl (c-func-arg-decl argnames args-list))
                 (ctx-clone (func-context-copy ctx)))
-           (displayln "FIXME: implement proper dx name querry")
-           (displayln "FIXME: all real arguments are assumed to be dual. Only single derivative func is genetated.")
            (with-syntax* 
              ((ret-str (datum->syntax stx func-return-value-str))
               (name-str-stx name-str)
@@ -1405,8 +1396,8 @@
 
 (define-for-syntax 
   (is-self-sufficent-function? name)
-  ;; FIXME
-  (displayln "FIXME: implement proper is-self-sufficent-function?")
+  ;; FIXME irrelevant
+  #| (displayln "FIXME: implement proper is-self-sufficent-function?") |#
   (equal? name 'main))
 
 
@@ -1692,10 +1683,10 @@
                        (func-context-.current-variables ctx) #'name final-type))
                ((name-sym-stx) (datum->syntax stx name-sym)))
 
-          (displayln "ndt:")
-          (pretty-print (func-context-.need-derivatives-table ctx))
-           (displayln (format "name-vs final-type dual-r-vars need-variable ~a ~a ~a ~a" 
-                              name-vs final-type dual-r-vars need-variable)) 
+          #| (displayln "ndt:") |#
+          #| (pretty-print (func-context-.need-derivatives-table ctx)) |#
+           #| (displayln (format "name-vs final-type dual-r-vars need-variable ~a ~a ~a ~a" |# 
+           #|                    name-vs final-type dual-r-vars need-variable)) |# 
             (cond
               ((and need-variable (not dual-r-vars))
                (datum->syntax stx
@@ -2070,16 +2061,16 @@
              (define tok (current-inexact-milliseconds))
              (hash-update! TIME-TABLE 'head-time (lambda (old-time) (fl+ old-time (fl- get-value-head-time tik))))
              (hash-update! TIME-TABLE 'tail-time (lambda (old-time) (fl+ old-time (fl- tok get-value-head-time))))
-             (displayln (format "get-value head-time: ~a" (hash-ref TIME-TABLE 'head-time 0.0)))
-             (displayln (format "  get-value search-name time: ~a" (hash-ref TIME-TABLE 'search-name 0.0)))
-             #| (displayln (format "    get-value search-constant time: ~a" (hash-ref TIME-TABLE 'search-constant 0.0))) |#
-             (displayln (format "    get-value search-variable time: ~a" (hash-ref TIME-TABLE 'search-variable 0.0)))
-             (displayln (format "    get-value HASH-HIT: ~a" HASH-HIT))
-             #| (displayln (format "    get-value search-argument time: ~a" (hash-ref TIME-TABLE 'search-argument 0.0))) |#
-             (displayln (format "  get-value local-expand time: ~a" (hash-ref TIME-TABLE 'local-expand 0.0)))
-             (displayln (format "  get-value local-expand-2 time: ~a" (hash-ref TIME-TABLE 'local-expand-2 0.0)))
-             (displayln (format "  get-value to-landau-type time: ~a" (hash-ref TIME-TABLE 'to-landau-type 0.0)))
-             (displayln (format "get-value tail-time: ~a" (hash-ref TIME-TABLE 'tail-time 0.0)))
+             #| (displayln (format "get-value head-time: ~a" (hash-ref TIME-TABLE 'head-time 0.0))) |#
+             #| (displayln (format "  get-value search-name time: ~a" (hash-ref TIME-TABLE 'search-name 0.0))) |#
+             #| #1| (displayln (format "    get-value search-constant time: ~a" (hash-ref TIME-TABLE 'search-constant 0.0))) |1# |#
+             #| (displayln (format "    get-value search-variable time: ~a" (hash-ref TIME-TABLE 'search-variable 0.0))) |#
+             #| (displayln (format "    get-value HASH-HIT: ~a" HASH-HIT)) |#
+             #| #1| (displayln (format "    get-value search-argument time: ~a" (hash-ref TIME-TABLE 'search-argument 0.0))) |1# |#
+             #| (displayln (format "  get-value local-expand time: ~a" (hash-ref TIME-TABLE 'local-expand 0.0))) |#
+             #| (displayln (format "  get-value local-expand-2 time: ~a" (hash-ref TIME-TABLE 'local-expand-2 0.0))) |#
+             #| (displayln (format "  get-value to-landau-type time: ~a" (hash-ref TIME-TABLE 'to-landau-type 0.0))) |#
+             #| (displayln (format "get-value tail-time: ~a" (hash-ref TIME-TABLE 'tail-time 0.0))) |#
              #'r
              )))))))
 
@@ -2358,7 +2349,7 @@
         (raise-syntax-error #f "assignation to an argument is not allowed" name))
        ((equal? name_ func-name)
         (let ((func-return-value (func-context-.function-return-value ctx)))
-          (displayln (format "name: ~a fake-src-pos is used" name))
+          #| (displayln (format "name: ~a fake-src-pos is used" name)) |#
           (values
            (datum->syntax stx func-return-value)
            (func-context-.function-return-type ctx)
@@ -2368,7 +2359,7 @@
           (cond
             (var
              (begin
-               (displayln (format "name: ~a variable-src-pos = ~a is used." name (variable-src-pos var)))
+               #| (displayln (format "name: ~a variable-src-pos = ~a is used." name (variable-src-pos var))) |#
                (values (datum->syntax stx (variable-symbol var))
                        (variable-type var)
                        (variable-src-pos var))))
@@ -2385,7 +2376,6 @@
               (func-body (function-inline-semantics-template-.body inl-f)) 
               (type (function-inline-semantics-template-.type inl-f))
               (function-name (function-inline-semantics-template-.name inl-f)))
-         (displayln (format "function-name: ~a syntax-position: ~a" function-name (syntax-position function-name)))
          (with-syntax
            ((function-name function-name)
             (func-ret (datum->syntax stx func-ret-symb))
@@ -2427,23 +2417,23 @@
 
 (define-syntax (assignation stx)
   (begin
-    (displayln (format "assignation time: ~a" (hash-ref TIME-TABLE 'assignation 0.0)))
-    (displayln (format "assignation counts: ~a" (hash-ref TIME-TABLE 'assignation-counts 0)))
-    (displayln (format "  'index-exp: ~a" (hash-ref TIME-TABLE 'index-exp 0)))
-    (displayln (format "  'typecheck-mode: ~a" (hash-ref TIME-TABLE 'typecheck-mode  0)))
-    (displayln (format "  'func-ret-assign: ~a" (hash-ref TIME-TABLE 'func-ret-assign 0)))
-    (displayln (format "  'func-ret-assign_: ~a" (hash-ref TIME-TABLE 'func-ret-assign_ 0)))
-    (displayln (format "  'value-exp: ~a" (hash-ref TIME-TABLE 'value-exp 0)))
-    (displayln (format "  'search-left-hand-side-name ~a" (hash-ref TIME-TABLE 'search-left-hand-side-name 0)))
-    (displayln (format "  'left-hand-getter-info ~a" (hash-ref TIME-TABLE 'left-hand-getter-info 0)))
-    (displayln (format "  'get-slice-start-and-range ~a" (hash-ref TIME-TABLE 'get-slice-start-and-range 0)))
-    (displayln (format "  'assignation-tail ~a" (hash-ref TIME-TABLE 'assignation-tail 0)))
-    (displayln (format "    'make-der-assignation-loops-list ~a" (hash-ref TIME-TABLE 'make-der-assignation-loops-list 0)))
-    (displayln (format "    'make-set-all-derivatives-to-zero-list ~a" (hash-ref TIME-TABLE 'make-set-all-derivatives-to-zero-list 0)))
-    (displayln (format "    'make-der-assignation-loops-list/array ~a" (hash-ref TIME-TABLE 'make-der-assignation-loops-list/array 0)))
-    (displayln (format "      'get-derivative-stx ~a" (hash-ref TIME-TABLE 'get-derivative-stx 0)))
-    (displayln (format "      'get-derivative-stx counts: ~a" (hash-ref TIME-TABLE 'get-derivative-stx-counts 0)))
-    (displayln (format "    'make-set-all-derivatives-to-zero/array ~a" (hash-ref TIME-TABLE 'make-set-all-derivatives-to-zero/array 0)))
+    #| (displayln (format "assignation time: ~a" (hash-ref TIME-TABLE 'assignation 0.0))) |#
+    #| (displayln (format "assignation counts: ~a" (hash-ref TIME-TABLE 'assignation-counts 0))) |#
+    #| (displayln (format "  'index-exp: ~a" (hash-ref TIME-TABLE 'index-exp 0))) |#
+    #| (displayln (format "  'typecheck-mode: ~a" (hash-ref TIME-TABLE 'typecheck-mode  0))) |#
+    #| (displayln (format "  'func-ret-assign: ~a" (hash-ref TIME-TABLE 'func-ret-assign 0))) |#
+    #| (displayln (format "  'func-ret-assign_: ~a" (hash-ref TIME-TABLE 'func-ret-assign_ 0))) |#
+    #| (displayln (format "  'value-exp: ~a" (hash-ref TIME-TABLE 'value-exp 0))) |#
+    #| (displayln (format "  'search-left-hand-side-name ~a" (hash-ref TIME-TABLE 'search-left-hand-side-name 0))) |#
+    #| (displayln (format "  'left-hand-getter-info ~a" (hash-ref TIME-TABLE 'left-hand-getter-info 0))) |#
+    #| (displayln (format "  'get-slice-start-and-range ~a" (hash-ref TIME-TABLE 'get-slice-start-and-range 0))) |#
+    #| (displayln (format "  'assignation-tail ~a" (hash-ref TIME-TABLE 'assignation-tail 0))) |#
+    #| (displayln (format "    'make-der-assignation-loops-list ~a" (hash-ref TIME-TABLE 'make-der-assignation-loops-list 0))) |#
+    #| (displayln (format "    'make-set-all-derivatives-to-zero-list ~a" (hash-ref TIME-TABLE 'make-set-all-derivatives-to-zero-list 0))) |#
+    #| (displayln (format "    'make-der-assignation-loops-list/array ~a" (hash-ref TIME-TABLE 'make-der-assignation-loops-list/array 0))) |#
+    #| (displayln (format "      'get-derivative-stx ~a" (hash-ref TIME-TABLE 'get-derivative-stx 0))) |#
+    #| (displayln (format "      'get-derivative-stx counts: ~a" (hash-ref TIME-TABLE 'get-derivative-stx-counts 0))) |#
+    #| (displayln (format "    'make-set-all-derivatives-to-zero/array ~a" (hash-ref TIME-TABLE 'make-set-all-derivatives-to-zero/array 0))) |#
     
     (timeit! TIME-TABLE 'assignation (thunk (syntax-parse stx
 
@@ -2573,8 +2563,8 @@
                    (index-start-expanded_ index-start-expanded_)
                    (slice-range slice-range)
                    )
-                  (displayln "FIXME: make sure that funcs-ret-assign should be always before set-all-derivatives-to-zero")
-                  (displayln "FIXME: make sure that single function return variable is enough for sequential calls to one funcition")
+                  #| (displayln "FIXME: make sure that funcs-ret-assign should be always before set-all-derivatives-to-zero") |#
+                  #| (displayln "FIXME: make sure that single function return variable is enough for sequential calls to one funcition") |#
                   (cond
                     ((getter-is-var? left-hand-getter-info)
                      ;; NOTE: Non-array case
@@ -2902,8 +2892,6 @@
                          [return-stx (datum->syntax
                                       stx
                                       `(_for ,#'symm ,#'start-val ,#'stop-val ,#'pat.body))])
-            (displayln (format "symm: ~a; name: ~a" #'symm #'name))
-            (displayln (format "syntax-binding-set: ~a" (syntax-binding-set)))
             (throw-if-not-int #'start-val "Only 'int allowed for ranges")
             (throw-if-not-int #'stop-val "Only 'int allowed for ranges")
             (quasisyntax/loc stx
