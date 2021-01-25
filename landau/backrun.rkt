@@ -1,4 +1,4 @@
-#lang racket
+#lang racket/base
 (require (for-syntax racket/base
                      racket/contract
                      racket/fixnum
@@ -18,6 +18,7 @@
          "environment.rkt"
          "type-utils.rkt"
          racket/contract/region
+         racket/function
          racket/stxparam
          racket/flonum
          racket/fixnum
@@ -60,6 +61,29 @@
   (define-syntax-class colon
     (pattern ":")))
 
+(define-for-syntax (copy-syntax-properties src dst)
+  (define props (syntax-property-symbol-keys src))
+  (foldl 
+    (lambda (prop-key result-stx)
+      (define prop-value (syntax-property src prop-key))
+      (syntax-property result-stx prop-key prop-value))
+    dst
+    props))
+
+(define-for-syntax (local-expand-opaque stx)
+  (local-expand stx 'expression '())
+ #| (let-values |#
+ #|   (((expanded opaque) (syntax-local-expand-expression stx))) |#
+ #|   (define opaque-with-props (copy-syntax-properties expanded opaque)) |#
+ #|   (with-syntax ((stx-opaque-with-props opaque-with-props) |#
+ #|                 (stx-expanded expanded)) |#
+ #|     (displayln (format "~a ~a ~a" stx expanded opaque-with-props)) |#
+ #|     (displayln (format "~a ~a" (syntax-property-symbol-keys expanded) |#
+ #|                        (syntax-property-symbol-keys opaque-with-props))) |#
+ #|     (if (atom-number expanded) |#
+ #|       expanded |#
+ #|       opaque-with-props))) |#
+ )
 
 
 (define-for-syntax (evaluate expanded-syntax)
@@ -117,7 +141,7 @@
             (fake-src-pos 0)
             (tld (if (empty? top-level-decl)
                    #'(void)
-                   (local-expand (datum->syntax stx (cons 'begin top-level-decl)) 'expression '()))))
+                   (local-expand-opaque (datum->syntax stx (cons 'begin top-level-decl))))))
        ;; NOTE: Evaluate top level constants and parameters declarations
        (eval tld (current-namespace))
        (datum->syntax
@@ -155,7 +179,7 @@
   (if rng
       (begin
         (cadr (syntax->datum
-               (local-expand (datum->syntax #'rng-stx rng) 'expression '()))))
+               (local-expand-opaque (datum->syntax #'rng-stx rng)))))
       #f))
 
 (define-for-syntax (check-proper-getter idx-stx slice-colon expanded-range expanded-idx name-str stx)
@@ -199,7 +223,7 @@
      (let* ((args (make-hash))
             (func-return-type (parse-type (syntax->datum #'type)))
             (func-name-str (symbol->string (syntax->datum #'name)))
-            (func-return-value (gensym func-name-str))
+            (func-return-value (gensym_ func-name-str))
             (fake-src-pos 0)
             (func-return-range (atom-number (type-range (expand-type (datum->syntax #'type func-return-type)))))
             (func-args
@@ -227,8 +251,7 @@
                               (arg-base-type (syntax->datum (cadr arg-type)))
                               (arg-range-expanded
                                (atom-number
-                                (local-expand
-                                 (datum->syntax stx (syntax->datum (caddr arg-type))) 'expression '()))))
+                                (local-expand-opaque (datum->syntax stx (syntax->datum (caddr arg-type)))))))
                              (cons arg-base-type arg-range-expanded))))
             (func-parameters-info
              (for/list ((argname (in-list (syntax-e #'(arg*.name ...))))
@@ -376,9 +399,7 @@
                                             (if (attribute index) #'index #'#f)
                                             (if (equal? maybe-array-range '()) #f maybe-array-range))))
           ((index-expanded) (if (attribute index) 
-                              (local-expand 
-                                #'index
-                                'expression '())
+                              (local-expand-opaque #'index)
                               #f)))
          ;;FIXME pass getter-info as syntax property?
          #| (displayln "FIXME: check getter in get-value") |# 
@@ -519,8 +540,12 @@
             (dx-getter (make-getter-info (if (attribute dx-idx) #'dx-idx #'#f) 
                                          (if (attribute dx-slice-colon) #'dx-slice-colon #'#f) 
                                          (to-landau-type stx dx-type)))
-            (func-ret-idx-expanded (if (attribute func-ret-idx) (local-expand #'func-ret-idx 'expression '()) #f))
-            (dx-idx-expanded (if (attribute dx-idx) (local-expand #'dx-idx 'expression '()) #f))
+            (func-ret-idx-expanded (if (attribute func-ret-idx) 
+                                     (local-expand-opaque #'func-ret-idx)
+                                     #f))
+            (dx-idx-expanded (if (attribute dx-idx)
+                               (local-expand-opaque #'dx-idx)
+                               #f))
             (expanded-range 
               (atom-number 
                 #`#,(expand-range (if (attribute func-ret-idx) #'func-ret-idx #'#f) 
@@ -529,7 +554,9 @@
               (atom-number 
                 #`#,(expand-range (if (attribute dx-idx) #'dx-idx #'#f) 
                                   (if (equal? arr-2-range '()) #f arr-2-range))))
-            (value-type (syntax-property (local-expand #'value 'expression '()) 'landau-type))
+            (value-type (syntax-property 
+                          (local-expand-opaque #'value)
+                          'landau-type))
             (func-slice-colon_ (attribute func-slice-colon))
             (dx-slice-colon_ (attribute dx-slice-colon))
             (throw-slice-cast-error (thunk
@@ -710,8 +737,12 @@
             (name-2-dat (symbol->string (syntax->datum #'dx-name)))
             (df-range (check-real-var-existence #'df-name 'get-range))
             (dx-range (check-real-arg-or-parameter-existence #'dx-name 'get-range))
-            (df-idx-expanded (if (attribute df-idx) (local-expand #'df-idx 'expression '()) #f))
-            (dx-idx-expanded (if (attribute dx-idx) (local-expand #'dx-idx 'expression '()) #f))
+            (df-idx-expanded (if (attribute df-idx) 
+                               (local-expand-opaque #'df-idx)
+                               #f))
+            (dx-idx-expanded (if (attribute dx-idx)
+                               (local-expand-opaque #'dx-idx)
+                               #f))
             (expanded-range-df (atom-number 
                                  #`#,(expand-range 
                                        (if (attribute df-idx) #'df-idx #'#f) 
@@ -777,7 +808,8 @@
                       (dx-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'dx-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp 
+                        (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -806,7 +838,8 @@
                       (df-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp 
+                        (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -832,7 +865,8 @@
                       (df-full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (dx-full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'(* df-slice-range dx-slice-range))
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp 
+                        (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -850,7 +884,8 @@
                      ((df-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp
+                        (local-expand-opaque #'der-value)))
                      (define r-value-type (syntax-property #'r-value-exp 'landau-type))
 
                    ;(displayln (format "full-idx ~a\nlvalue-outer-prod-range ~a\nr-value-exp ~a\nr-value-type ~a" #'full-idx #'lvalue-outer-prod-range #'r-value-exp #'r-value-type))
@@ -868,7 +903,8 @@
                      ((dx-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'dx-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp
+                        (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -889,7 +925,7 @@
 
 (define-for-syntax (get-expanded-slice-index-start index-start)
   (let* ((index-start-expanded (if (syntax->datum index-start)
-                                   (local-expand index-start 'expression '())
+                                   (local-expand-opaque index-start)
                                    (is-type_ 'int-index #'0)))
          (index-start-expanded_ (if (atom-number index-start-expanded)
                                     (atom-number index-start-expanded)
@@ -899,8 +935,7 @@
 (define-for-syntax (get-expanded-slice-index-end stx index-end array-range-stx)
   (let* ((index-end-expanded (if (syntax->datum index-end)
                                  (begin
-                                   ; (println index-end)
-                                   (local-expand index-end 'expression '()))
+                                   (local-expand-opaque index-end))
                                  (is-type_ 'int-index (datum->syntax stx array-range-stx))))
          (index-end-expanded_ (if (atom-number index-end-expanded)
                                   (atom-number index-end-expanded)
@@ -959,7 +994,8 @@
 
 (define-for-syntax (throw-if-r-value-is-slice stx r-value-stx)
   (with-syntax*
-      ((r-value-exp (local-expand r-value-stx 'expression '()))
+      ((r-value-exp
+         (local-expand-opaque r-value-stx))
        (r-value-type (syntax-property #'r-value-exp 'landau-type)))
     (when (is-slice? (syntax->datum #'r-value-type))
       (raise-syntax-error #f
@@ -999,8 +1035,12 @@
             (dx-getter (make-getter-info (if (attribute dx-idx) #'dx-idx #'#f)
                                          (if (attribute dx-slice-colon) #'dx-slice-colon #'#f)
                                          (to-landau-type stx dx-type)))
-            (df-idx-expanded (if (attribute df-idx) (local-expand #'df-idx 'expression '()) #f))
-            (dx-idx-expanded (if (attribute dx-idx) (local-expand #'dx-idx 'expression '()) #f))
+            (df-idx-expanded (if (attribute df-idx)
+                               (local-expand-opaque #'df-idx)
+                               #f))
+            (dx-idx-expanded (if (attribute dx-idx)
+                               (local-expand-opaque #'dx-idx)
+                               #f))
             (expanded-range-df (atom-number #`#,(expand-range 
                                                   (if (attribute df-idx) 
                                                     #'df-idx 
@@ -1076,7 +1116,7 @@
                       (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'dx-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -1125,7 +1165,7 @@
                    (dx-slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                    (full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                    (lvalue-outer-prod-range #'dx-slice-range)
-                   (r-value-exp (local-expand #'der-value 'expression '())))
+                   (r-value-exp (local-expand-opaque #'der-value)))
                 (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                 (quasisyntax/loc
                     stx
@@ -1146,7 +1186,7 @@
                       (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -1167,7 +1207,7 @@
                       (slice-idx-synt (datum->syntax stx slice-idx-name-GLOBAL))
                       (full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (lvalue-outer-prod-range #'df-slice-range)
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp (local-expand-opaque #'der-value)))
                    (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                    (quasisyntax/loc
                        stx
@@ -1191,7 +1231,7 @@
                       (df-full-idx #`(+ #,df-index-start-stx df-slice-idx-synt))
                       (dx-full-idx #`(+ #,dx-index-start-stx dx-slice-idx-synt))
                       (lvalue-outer-prod-range #'(fx* df-slice-range dx-slice-range))
-                      (r-value-exp (local-expand #'der-value 'expression '())))
+                      (r-value-exp (local-expand-opaque #'der-value)))
                      (define r-value-type (syntax-property #'r-value-exp 'landau-type))
                      #| (displayln (format "r-value-type ~a" r-value-type)) |#
                    (quasisyntax/loc
@@ -1320,8 +1360,8 @@
 (define-syntax (expr stx)
   (syntax-parse stx
     ((_ expr1 op:plus-or-minus expr2)
-     (let* ((expr1-expanded (local-expand #'expr1 'expression '()))
-            (expr2-expanded (local-expand #'expr2 'expression '()))
+     (let* ((expr1-expanded (local-expand #'expr1 'expression (list)))
+            (expr2-expanded (local-expand #'expr2 'expression (list)))
             (expr1-is-int-index (equal? (syntax-property expr1-expanded 'landau-type) 'int-index))
             (expr2-is-int-index (equal? (syntax-property expr2-expanded 'landau-type) 'int-index))
             (op (syntax->datum #'op)))
@@ -1364,7 +1404,7 @@
        expr1)]
     
     [(_ expr1)
-     (with-syntax ((expanded (local-expand #'expr1 'expression '())))
+     (with-syntax ((expanded (local-expand #'expr1 'expression (list))))
        (syntax-track-origin (syntax/loc stx expanded) #'expr1 #'expr))]))
 
 (begin-for-syntax
@@ -1505,15 +1545,15 @@
                (arity-check func-str expected-arity par-list-len stx)
                (with-syntax* ((expr1 (car func-pars-list))
                               (expr2 (cadr func-pars-list))
-                              (expanded1 (local-expand #'expr1 'expression '()))
-                              (expanded2 (local-expand #'expr2 'expression '())))
+                              (expanded1 (local-expand #'expr1 'expression (list)))
+                              (expanded2 (local-expand #'expr2 'expression (list))))
                              (with-syntax-property 'getter-info (getter-info 'var #f)
                                                    (is-type_ 'real 
                                                              (syntax/loc stx (append expanded1 expanded2))))))
              (begin
                (arity-check func-str expected-arity par-list-len stx)
                (with-syntax* ((expr1 (car func-pars-list))
-                              (expanded1 (local-expand #'expr1 'expression '())))
+                              (expanded1 (local-expand #'expr1 'expression (list))))
                              (with-syntax-property 'getter-info (getter-info 'var #f)
                               (is-type_ 'real 
                                         (syntax/loc stx expanded1)))))))
@@ -1544,7 +1584,7 @@
                         #`(syntax-parameterize
                             ((func-call-box #,subfunc-call-box-value)
                              (func-is-called-inside-argument #t))
-                            par) 'expression '()))))))
+                            par) 'expression (list)))))))
 
              #| (displayln "FIXME: check if funciton local var are in der-table if they need a derivative after inlining") |#
 
@@ -1734,8 +1774,8 @@
 (define-syntax (term stx)
   (syntax-parse stx
     ((_ expr1 op:mul-or-div expr2)
-     (let* ((expr1-expanded (local-expand #'expr1 'expression '()))
-            (expr2-expanded (local-expand #'expr2 'expression '()))
+     (let* ((expr1-expanded (local-expand #'expr1 'expression (list)))
+            (expr2-expanded (local-expand #'expr2 'expression (list)))
             (expr1-is-int-index (equal? (syntax-property expr1-expanded 'landau-type) 'int-index))
             (expr2-is-int-index (equal? (syntax-property expr2-expanded 'landau-type) 'int-index))
             (op (syntax->datum #'op)))
@@ -1774,7 +1814,7 @@
             (raise-syntax-error #f (format "unsupported type: ~v" type) stx))))))
        
     [({~literal term} term1)
-     (with-syntax ((expanded (local-expand #'term1 'expression '())))
+     (with-syntax ((expanded (local-expand #'term1 'expression (list))))
        ;  (println #'expanded)
        ;  (println (format "term type: ~a" (syntax-property #'expanded 'landau-type)))
        ;  (println (format "term type emitted: ~a" (syntax-property (syntax-track-origin (syntax/loc stx expanded) #'term1 #'expr) 'landau-type)))
@@ -1785,7 +1825,7 @@
 (define-syntax (element stx)
   (syntax-parse stx
     [(_ number)
-     (with-syntax* ((expanded (local-expand #'number 'expression '()))
+     (with-syntax* ((expanded (local-expand #'number 'expression (list)))
                     (atom_ (atom-number #'expanded))
                     (type (syntax-property #'expanded 'landau-type)))
        (let ((type_ (syntax->datum #'type))
@@ -1812,47 +1852,10 @@
   (syntax-parse 
    stx
    [({~literal factor} primary "^" factor)
-    ; (let* ((primary-expanded (local-expand #'primary 'expression '()))
-    ;        (factor-expanded (local-expand #'factor 'expression '()))
-    ;        (primary-is-int-index (equal? (syntax-property expr1-expanded 'landau-type) 'int-index))
-    ;        (factor-is-int-index (equal? (syntax-property expr2-expanded 'landau-type) 'int-index)))
-    ;    (let*-values (((primary-casted factor-casted type) (binary-op-cast primary-expanded factor-expanded stx))
-    ;                  ((primary-atom) (atom-number primary-casted))
-    ;                  ((factor-atom) (atom-number factor-casted)))
-    ;      (cond
-    ;        ((equal? type 'real)
-    ;         (is-real
-    ;          (if (and primary-atom factor-atom)
-    ;              (quasisyntax/loc stx #,(rlexpt primary-atom factor-atom))
-    ;              (with-syntax* ((e1 (if (and (equal? #f primary-atom) (not primary-is-int-index))
-    ;                                     primary-casted
-    ;                                     #'(list)))
-    ;                             (e2 (if (and (equal? #f factor-atom) (not factor-is-int-index))
-    ;                                     factor-casted
-    ;                                     #'(list))))
-    ;                (syntax/loc stx (append e1 e2))))))
-    ;        ((is-slice? type)
-    ;         (is-type_ type (with-syntax* ((e1 (if (and (equal? #f primary-atom) (not primary-is-int-index))
-    ;                                               primary-casted
-    ;                                               #'(list)))
-    ;                                       (e2 (if (and (equal? #f factor-atom) (not factor-is-int-index))
-    ;                                               factor-casted
-    ;                                               #'(list))))
-    ;                          (syntax/loc stx (append e1 e2)))))
-    ;        ((equal? type 'int)
-    ;         (is-int
-    ;          (syntax/loc stx '())))
-    ;        ((equal? type 'int-index)
-    ;         (is-int-index
-    ;            (if (and primary-atom factor-atom)
-    ;              (quasisyntax/loc stx #,((if (equal? op "+") fx+ fx-) primary-atom factor-atom))
-    ;              (quasisyntax/loc stx (#,(if (equal? op "+") #'fx+ #'fx-) #,primary-expanded #,factor-expanded)))))
-    ;        (else
-    ;         (raise-syntax-error #f (format "unsupported type: ~v" type) stx)))))
     (error "^ operator is not implemented")]
 
    [({~literal factor} primary)
-    (with-syntax* ((expanded (local-expand #'primary 'expression '()))
+    (with-syntax* ((expanded (local-expand #'primary 'expression (list)))
                    (atom_ (atom-number #'expanded))
                    (type (syntax-property #'expanded 'landau-type)))
       (let ((type_ (syntax->datum #'type))
@@ -1876,7 +1879,7 @@
                 [(_ ((~literal unop) p-or-m) primary)
                  (let ((op (syntax->datum #'p-or-m)))
                   (with-syntax*
-                   ((expanded (local-expand #'primary 'expression '())))
+                   ((expanded (local-expand #'primary 'expression (list))))
                    (let ((expanded-basic-type (syntax-property #'expanded 'landau-type))
                          (atom (atom-number #'expanded))) 
                     (cond
@@ -1891,7 +1894,7 @@
                                        expanded))))))]
 
                 [(_ primary)
-                 (with-syntax* ((expanded (local-expand #'primary 'expression '()))
+                 (with-syntax* ((expanded (local-expand #'primary 'expression (list)))
                                 (atom_ (atom-number #'expanded))
                                 (type (syntax-property #'expanded 'landau-type)))
                    (let ((type_ (syntax->datum #'type))
@@ -1998,15 +2001,15 @@
                    ((maybe-array-range) (cadr type))
                    ((func-inline-list) (make-state (list))))
                    
-       (with-syntax* ((index-exp (local-expand #'getter.index 'expression '()))
+       (with-syntax* ((index-exp (local-expand-opaque #'getter.index))
                       (index-start-expanded (if slice-colon_ 
                                               (if (syntax->datum #'getter.index-start)
-                                                (local-expand #'getter.index-start 'expression '())
+                                                (local-expand-opaque #'getter.index-start)
                                                 (is-type_ 'int-index #'0))
                                               #f))
                       (index-end-expanded (if slice-colon_
                                             (if (syntax->datum #'getter.index-end)
-                                              (local-expand #'getter.index-end 'expression '())
+                                              (local-expand-opaque #'getter.index-end)
                                               (is-type_ 'int-index (datum->syntax stx (car maybe-array-range))))
                                             #f))
                       (value-exp_ (extract 
@@ -2070,12 +2073,12 @@
                   (when (equal? maybe-array-range '())
                     (raise-syntax-error #f (format "Variable ~a is not an array." name_) #'name))
                   (with-syntax* ((index-expanded
-                                  (local-expand #'getter.index 'expression '()))
+                                  (local-expand-opaque #'getter.index))
                                  (expanded-range 
                                    (cadr 
                                      (syntax->datum 
-                                       (local-expand 
-                                         (datum->syntax #'getter.index maybe-array-range) 'expression '())))))
+                                       (local-expand
+                                         (datum->syntax #'getter.index maybe-array-range) 'expression (list))))))
                     ;; NOTE: (cadr (cadr ... because expanded looks like that: '(#%app '4)
                     ;; NOTE: can't do check in transmormer phase because loop variable is not resolved by that time.
                     ;;       Need to insert check-bounds code in generated code
@@ -2099,8 +2102,7 @@
                                  (expanded-range 
                                    (cadr 
                                      (syntax->datum 
-                                       (local-expand 
-                                         (datum->syntax #'stx maybe-array-range) 'expression '()))))
+                                       (local-expand (datum->syntax #'stx maybe-array-range) 'expression (list)))))
                                  (index-start-expanded_ (if (atom-number #'index-start-expanded)
                                                             (atom-number #'index-start-expanded)
                                                             #'index-start-expanded))
@@ -2219,13 +2221,13 @@
                 ((expanded-list
                   (for/list ((arr-item (in-list (syntax-e #'(arr-item*.par-value ...)))))
                             (begin
-                             (local-expand arr-item 'expression '())))
+                             (local-expand-opaque arr-item)))
                   ))
                 (hash-set! constants (syntax->datum #'name)
                            (constant 'constant-name-placeholder type 'constant-array-placeholder))
                 (syntax/loc stx '()))))
              (else
-              (let* ((expanded (local-expand #'value 'expression '()))
+              (let* ((expanded (local-expand-opaque #'value))
                      (value (atom-number expanded))
                      (value-type (syntax-property expanded 'landau-type))
                      (value
@@ -2246,7 +2248,7 @@
     (({~literal parameter} "parameter" "[" size "]" name:id)
      
      (check-duplicate-parameter (syntax->datum #'name) stx)
-     (let* ((expanded-size (local-expand #'size 'expression '())))
+     (let* ((expanded-size (local-expand-opaque #'size)))
               
        (hash-set! parameters (syntax->datum #'name)
                   (list expanded-size))
@@ -2275,8 +2277,8 @@
               
                (err-msg "Only integer expressions of constant and loop variables are allowed for ranges"))
           (with-syntax ([symm (datum->syntax stx sym)]
-                        [start-val (local-expand #'start 'expression '())]
-                        [stop-val (local-expand #'stop 'expression '())])
+                        [start-val (local-expand-opaque #'start)]
+                        [stop-val (local-expand-opaque #'stop)])
             (throw-if-not-type 'int-index #'start-val err-msg)
             (throw-if-not-type 'int-index #'stop-val err-msg)
             (quasisyntax/loc stx
@@ -2305,8 +2307,8 @@
     [(_ "(" b-expr ")") #'b-expr]
     [(_ "(" n1 ({~literal comp-op} op) n2 ")")
      (with-syntax* (
-                    (val1 (local-expand #'n1 'expression '()))
-                    (val2 (local-expand #'n2 'expression '())))
+                    (val1 (local-expand-opaque #'n1))
+                    (val2 (local-expand-opaque #'n2)))
        (throw-if-not-type 'int-index #'val1 "Only 'int allowed inside the `if` condition.")
        (throw-if-not-type 'int-index #'val2 "Only 'int allowed inside the `if` condition.")
        (quasisyntax/loc stx #,(match (syntax->datum #'op)

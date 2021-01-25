@@ -2,6 +2,7 @@
 
 (require 
   racket/base
+  file/md5
   racket/contract/base
   racket/contract/combinator
   racket/contract/region
@@ -47,6 +48,34 @@
       ((list 'quote (? number?)) (cadr v))
       ((list 'quote (? extflonum?)) (cadr v))
       (else #f))))
+
+(define gensym_
+  (let ([counter 0])
+    (lambda ([x 'g])
+      (if (number? x)
+        (set! counter x)
+        (begin0 (string->unreadable-symbol
+                 (format "~a~a" x counter))
+          (set! counter (add1 counter)))))))
+
+(define (syntax->hash-key stx)
+ (md5 (format "~a" (syntax->datum stx))))
+
+(define local-expand-memo
+  (let ((memo (make-hash)))
+    (lambda (stx context-v stop-ids #:reset-memo (reset-memo #f))
+      (when reset-memo
+        (hash-clear! memo))
+      (define key (syntax->hash-key stx))
+      ;; #RRstx
+      ;; #RR(hash-has-key? memo key)
+      ;; #RRkey
+      ;; #RRmemo
+      (if (hash-has-key? memo key)
+        (hash-ref memo key)
+        (with-syntax ((value (local-expand stx context-v stop-ids)))
+          (hash-set! memo key #'value)
+          #'value)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; NOTE: Structs
@@ -455,7 +484,7 @@
   (-> current-variables/c (syntax/c symbol?) type/c
       symbol?)
   (let* ((name_ (syntax->datum name))
-         (sym (gensym name_))
+         (sym (gensym_ name_))
          (_src-pos (syntax-position name))
          (src-pos (if _src-pos _src-pos 0)))
         ; (println (format "add-variable! ~a ~a" name src-pos))
@@ -464,7 +493,7 @@
         sym))
 
 (define (add-argument! args name type)
-  (let ((sym (gensym name)))
+  (let ((sym (gensym_ name)))
     (hash-set!
      args name (argument sym type))
     sym))

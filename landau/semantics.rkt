@@ -1,8 +1,9 @@
-#lang racket
+#lang racket/base
 
 (require 
   (for-syntax racket/base
               syntax/parse
+              file/md5
               racket/syntax
               racket/string
               racket/hash
@@ -16,7 +17,7 @@
               racket/serialize
               racket/list
               racket/contract
-              macro-debugger/stepper-text
+              #| macro-debugger/stepper |#
               profile
               "environment.rkt"
               "backrun.rkt"
@@ -33,6 +34,8 @@
   "metalang.rkt"
   racket/stxparam
   racket/flonum
+  racket/list
+  racket/function
   racket/extflonum
   racket/fixnum)
 
@@ -52,6 +55,21 @@
          _0.0 _1.0 _2.0 _0.5
          _break _nothing _empty-statement _local
          )
+
+(define-for-syntax padding 0)
+
+(begin-for-syntax
+  (define-syntax-rule
+    (print-decorator pair-name expression)
+     (begin
+       (displayln (string->symbol (format "~a~a-begin" (build-string padding (lambda (x) #\space))
+                                          pair-name)))
+       (set! padding (add1 padding))
+       (let ((e expression))
+         (displayln (string->symbol (format "~a~a-end" (build-string padding (lambda (x) #\space))
+                                          pair-name)))
+       (set! padding (- padding 1))
+         e))))
 
 (define-syntax-parameter func-context #f)
 (define-syntax-parameter func-call-box 'func-call-box-not-set)
@@ -76,6 +94,85 @@
 (define-for-syntax (log-debug msg [force-log #f])
   (unless (and (not debug-compile) force-log)
     (displayln msg)))
+
+
+(define-for-syntax VALUE-TYPES-NEW (make-hash))
+
+(define-for-syntax VALUE-TYPES
+ (hash 
+   #"0ff222cdd4408ca58ac995a1f20752b7"  'real
+   #"0f62c44f5c5b17c3cd52003ee2c92c5a"  'dual-b
+   #"75d58e28f7497e2f6081775bea001b76"  '(dual-b (range-placeholder))
+   #"817b48be2c97ce698ea0d4b97ee50c00"  'dual-b
+   #"0fac74f76d20b0bbc0eaab712243d6f8"  'dual-b
+   #"6d12f0431953410d0e4113e263f50dba"  'real
+   #"af30d25a6e2d86bd4e0af595b32618be"  'real
+   #"c2613422de15158d408f431a539fd12a"  'dual-b
+   #"9d3c52b2b53435ee049290b33ddc4441"  'real
+   #"744a5fd711615964e04bb6024affc193"  'dual-b
+   #"0c9e34aca91dec3696cfa85a60192f8d"  'real
+   #"9f4849e28bacb8a3649529076f16a98c"  'real
+   #"336edbd2543ac61e668c69b9c9e8ab9a"  '(dual-b (range-placeholder))
+   #"472125def853f2ea70fcc516dcec09d1"  'real
+   #"17efa878503f88dca060e5af16202e7e"  'real
+   #"f80b95c52ecbd89882d33297df9c38e8"  '(dual-b (range-placeholder))
+   #"b11dab1f0ce28f7746d153b1b3bf7ceb"  'dual-b
+   #"3fe5af74ccb45f5c7f8b081007a77ba9"  'dual-b
+   #"55e9a4db6d38df6c7814053aad2d4119"  'dual-b
+   #"e681ef7f607beec317e42716139d91c9"  '(real (range-placeholder))
+   #"12e8497abfea00685c7b48518f56bea9"  'dual-b
+   #"33580faac6102c1787f3fa4f69e013b9"  'dual-b
+   #"6e92cd2c0191c7a7fec870b005476fd4"  'dual-b
+   #"5a38d50bd153cb474b346004ab490b74"  '(dual-b (range-placeholder))
+   #"e69dc9f1dc690d89d5673fe30ac6940a"  'real
+   #"61106879ee152cb3b33d8a72f9e399c2"  'dual-b
+   #"8465230e823fd9aa28be42f5a4930707"  'dual-b
+   #"5758442c8417182769a723f771e55ec2"  'real
+   #"c894053d1e92ac7c626750338a253210"  '(dual-b (range-placeholder))
+   #"166de58ac6cb0c9431bce1ffd7b82da8"  'real
+   #"8d74e6539e7da0135c49b983de10447f"  '(dual-b (range-placeholder))
+   #"89df0fb75821c5319ade5eebc39cb08d"  'dual-b
+   #"3bb4cc2a3091e4f9ba793916c200909e"  '(real (range-placeholder))
+   #"019616041ba0abfecca405e67f212fea"  'dual-b
+   #"2076b6a5914da49d20a2b7433be47586"  '(dual-b (range-placeholder))
+   #"50ef51916fc809d83b1f8d33fb9911ae"  'real
+   #"dd4b2e22e1c277b270ed280834832e3f"  '(dual-b (range-placeholder))
+   #"2f4713337489f4e513cd8f1978b3728a"  'dual-b
+   #"c501a0f1e8b444a1be0eb99b589df7cb"  'real
+   #"c543fc1904c3af1f9d4847af7c15919b"  'dual-b
+   #"39369e2621e07e26d3a0b17a71fa8ec8"  'dual-b
+   #"23b32ab978252a9c6fb8789f49b88339"  'real
+   #"d29db8b6678055b655a9bffa757477b5"  'dual-b
+   #"d2e0a7cb4b350e9c524809b5d86b6f90"  '(dual-b (range-placeholder))
+   #"9c5822b94862d355fd1fa8522482ba05"  'dual-b
+   #"3d63977c04904df0722c4ffab0ebf9be"  'dual-b
+   #"b86bb79082f1a6f3199587d8562ed398"  '(dual-b (range-placeholder))
+   #"ff0ee445f3fe1dcffd1b1d855be8ba82"  'dual-b
+   #"6b4b20724a21466037210b14cec15cbc"  'dual-b
+   #"819235d83bad771223573cc18bff834b"  'dual-b
+   #"0d0ebb98f6aaaf1a8e53e93c23b83b8d"  'real
+   #"f645ba504d7b0f96a389dfa5395db0b5"  'real
+   #"6eec82b50c6fd4f3e9beff8da66f30c8"  '(dual-b (range-placeholder))
+   #"ad5f6fc23be6f5ea1127dee67d70fb0a"  'dual-b
+   #"d78836983a9544fa529d0ca42e6dca20"  '(dual-b (range-placeholder))
+   #"aa0a8886227fba1dbb8f3430e3eb3d25"  '(real (range-placeholder))
+   #"0a96ceb7e2e2e553daa91c2add037115"  '(real (range-placeholder))
+   #"03b29cce7d3a0aa058393a981b2f4271"  'real
+   #"f6b44dcdeda82f1e7be83b1b72ffab5a"  'dual-b
+   #"6ff639a58db4428f1e315689a6b7f24e"  '(dual-b (range-placeholder))
+   #"788446725089b7bfb9a5cf28fe11e1d1"  'dual-b
+   #"d13ffd231ac9dedb5ba97a415b7d96fc"  '(real (range-placeholder))
+   #"ce7312928ff7f6faa4fde37fbba203ea"  'dual-b
+   #"a44ab97bcee78c3267c4a03d5115e435"  'dual-b
+   #"f0138aea467ed70a2687b6b4e26f44d0"  'dual-b
+   #"9da95033896a25c02d3642ebafd95b02"  '(dual-b (range-placeholder))
+   #"54bd29e38072fa7b4e491a1f269863a3"  'dual-b
+   #"41cee5d6e9b950fd78a918468c3191ff"  'real
+   #"602c44a7c58040e9d097f1bf1f12e21d"  'dual-b
+   #"f8c50b8e9344c7339026595dfd1d8d27"  'real
+   #"689f82c5f99899ec687efa70244b04c8"  'real
+   #"352f3816255a10f9990031b7b3b05d8d"  'int)
+  )
 
 
 (begin-for-syntax
@@ -229,12 +326,12 @@
 
 (define-for-syntax (make-derivative-getter-func/array stx)
   (with-syntax*
-        ((full-idx (datum->syntax stx (gensym "full_idx")))
-         (dx-mapped-size (datum->syntax stx (gensym "dx_mapped_size")))
-         (al-index (datum->syntax stx (gensym "al_idx")))
-         (inv-mapping-period (datum->syntax stx (gensym "inv_mapping_period")))
-         (dx-idxs-mappings (datum->syntax stx (gensym "dx_idx_mappings")))
-         (der-vec (datum->syntax stx (gensym "der_vec")))
+        ((full-idx (datum->syntax stx (gensym_ "full_idx")))
+         (dx-mapped-size (datum->syntax stx (gensym_ "dx_mapped_size")))
+         (al-index (datum->syntax stx (gensym_ "al_idx")))
+         (inv-mapping-period (datum->syntax stx (gensym_ "inv_mapping_period")))
+         (dx-idxs-mappings (datum->syntax stx (gensym_ "dx_idx_mappings")))
+         (der-vec (datum->syntax stx (gensym_ "der_vec")))
          (argnames (list
                     #'full-idx
                     #'dx-mapped-size
@@ -281,11 +378,11 @@
 
 (define-for-syntax (make-derivative-getter-func stx)
   (with-syntax*
-        ((dx-mapped-size (datum->syntax stx (gensym "dx_mapped_size")))
-        (al-index (datum->syntax stx (gensym "al_idx")))
-        (inv-mapping-period (datum->syntax stx (gensym "inv_mapping_period")))
-        (dx-idxs-mappings (datum->syntax stx (gensym "dx_idx_mappings")))
-        (der-vec (datum->syntax stx (gensym "der_vec")))
+        ((dx-mapped-size (datum->syntax stx (gensym_ "dx_mapped_size")))
+        (al-index (datum->syntax stx (gensym_ "al_idx")))
+        (inv-mapping-period (datum->syntax stx (gensym_ "inv_mapping_period")))
+        (dx-idxs-mappings (datum->syntax stx (gensym_ "dx_idx_mappings")))
+        (der-vec (datum->syntax stx (gensym_ "der_vec")))
         (argnames (list
                                  #'al-index
                                  #'inv-mapping-period
@@ -339,8 +436,8 @@
 (define-syntax (expr stx)
   (syntax-parse stx
     ((_ expr1-unexpanded op:plus-or-minus expr2-unexpanded)
-     (let* ((expr1 (local-expand #'expr1-unexpanded 'expression '()))
-            (expr2 (local-expand #'expr2-unexpanded 'expression '()))
+     (let* ((expr1 (local-expand-memo #'expr1-unexpanded 'expression '()))
+            (expr2 (local-expand-memo #'expr2-unexpanded 'expression '()))
             (type1 (syntax-property expr1 'landau-type))
             (type2 (syntax-property expr2 'landau-type))
             (op (syntax->datum #'op)))
@@ -384,7 +481,7 @@
                 (is-type_ type
                           (with-syntax* ((dual-expr dual-expr_)
                                          (n n)
-                                         (expanded-dual-expr (local-expand #'dual-expr 'expression '()))
+                                         (expanded-dual-expr (local-expand-memo #'dual-expr 'expression '()))
                                          (dual-b-value (get-value-stx #'expanded-dual-expr))
                                          (dual-b-derivative (get-derivative-stx #'expanded-dual-expr))
                                          (oprtr (if (equal? op "+") #'_rl+ #'_rl-)))
@@ -408,7 +505,7 @@
                 (is-type_ type
                           (with-syntax* ((dual-expr dual-expr_)
                                          (n n)
-                                         (expanded-dual-expr (local-expand #'dual-expr 'expression '()))
+                                         (expanded-dual-expr (local-expand-memo #'dual-expr 'expression '()))
                                          (dual-b-value (get-value-stx #'expanded-dual-expr))
                                          (dual-b-derivative (get-derivative-stx #'expanded-dual-expr))
                                          (oprtr (if (equal? op "+") #'_rl+ #'_rl-)))
@@ -428,11 +525,11 @@
                   (and (is-slice-of-type 'dual-b type1) (equal? type2 'dual-b))
                   (and (is-slice-of-type 'dual-b type1) (is-slice-of-type 'dual-b type2)))
                   
-              (with-syntax* ((expanded-dual-expr-1 (local-expand #'expr1-unexpanded 'expression '()))
+              (with-syntax* ((expanded-dual-expr-1 (local-expand-memo #'expr1-unexpanded 'expression '()))
                              (dual-b-value-1 (get-value-stx #'expanded-dual-expr-1))
                              (dual-b-derivative-1 (get-derivative-stx #'expanded-dual-expr-1))
 
-                             (expanded-dual-expr-2 (local-expand #'expr2-unexpanded 'expression '()))
+                             (expanded-dual-expr-2 (local-expand-memo #'expr2-unexpanded 'expression '()))
                              (dual-b-value-2 (get-value-stx #'expanded-dual-expr-2))
                              (dual-b-derivative-2 (get-derivative-stx #'expanded-dual-expr-2))
                              (oprtr (if (equal? op "+") #'_rl+ #'_rl-))
@@ -473,8 +570,8 @@
     ((_ expr1-unexpanded op:mul-or-div expr2-unexpanded)
 
      (begin
-       (let* ((expr1_ (local-expand #'expr1-unexpanded 'expression '()))
-              (expr2_ (local-expand #'expr2-unexpanded 'expression '()))
+       (let* ((expr1_ (local-expand-memo #'expr1-unexpanded 'expression '()))
+              (expr2_ (local-expand-memo #'expr2-unexpanded 'expression '()))
               (type1 (syntax-property expr1_ 'landau-type))
               (type2 (syntax-property expr2_ 'landau-type))
               (op (syntax->datum #'op)))
@@ -525,7 +622,7 @@
                     (is-type_ type
                               (with-syntax* ((dual-expr dual-expr_)
                                              (n n_)
-                                             (expanded-dual-expr (local-expand #'dual-expr 'expression '()))
+                                             (expanded-dual-expr (local-expand-memo #'dual-expr 'expression '()))
                                              (dual-b-value (get-value-stx #'expanded-dual-expr))
                                              (dual-b-derivative (get-derivative-stx #'expanded-dual-expr)))
                                 ;; NOTE: f * n
@@ -557,11 +654,11 @@
                       (and (is-slice-of-type 'dual-b type1) (is-slice-of-type 'dual-b type2)))
                   
                   (with-syntax*
-                    ((expanded-dual-expr-1 (local-expand #'expr1-unexpanded 'expression '()))
+                    ((expanded-dual-expr-1 (local-expand-memo #'expr1-unexpanded 'expression '()))
                      (dual-b-value-1 (get-value-stx #'expanded-dual-expr-1))
                      (dual-b-derivative-1 (get-derivative-stx #'expanded-dual-expr-1))
                      
-                     (expanded-dual-expr-2 (local-expand #'expr2-unexpanded 'expression '()))
+                     (expanded-dual-expr-2 (local-expand-memo #'expr2-unexpanded 'expression '()))
                      (dual-b-value-2 (get-value-stx #'expanded-dual-expr-2))
                      (dual-b-derivative-2 (get-derivative-stx #'expanded-dual-expr-2))
                      (res 
@@ -589,12 +686,12 @@
                     #'res)))))))))))
        
     [({~literal term} term1)
-     (with-syntax ((expanded (local-expand #'term1 'expression '())))
+     (with-syntax ((expanded (local-expand-memo #'term1 'expression '())))
        (syntax-track-origin (syntax/loc stx expanded) #'term1 #'expr))]))
     
 (define-for-syntax (cast-func-args-list func-args-list)
   (for/list ((par (in-list func-args-list)))
-    (with-syntax ((par-exp-value-part (extract (local-expand
+    (with-syntax ((par-exp-value-part (extract (local-expand-memo
                                                 #`(syntax-parameterize
                                                       ((expand-value-only #t))
                                                     par) 'expression '()))))
@@ -852,7 +949,7 @@
              (match expected-arity
               (1 (with-syntax*
                  ((expr (car func-pars-list))
-                  (expanded (local-expand #'expr 'expression '()))
+                  (expanded (local-expand-memo #'expr 'expression '() #:reset-memo #t))
                   (expanded-type (syntax-property #'expanded 'landau-type)))
                (let ((expanded-type-datum (syntax->datum #'expanded-type)))
                  (match expanded-type-datum
@@ -910,8 +1007,8 @@
                                                 (hash-keys BUILT-IN-FUNCTIONS) (syntax->datum #'expanded-type)) 
                                         stx))))))
            (2 (with-syntax*
-                 ((expanded-1 (local-expand (car func-pars-list) 'expression '()))
-                  (expanded-2 (local-expand (cadr func-pars-list) 'expression '())))
+                 ((expanded-1 (local-expand-memo (car func-pars-list) 'expression '() #:reset-memo #t))
+                  (expanded-2 (local-expand-memo (cadr func-pars-list) 'expression '() #:reset-memo #t)))
                (let ((expanded-type-1 (syntax-property #'expanded-1 'landau-type))
                      (expanded-type-2 (syntax-property #'expanded-2 'landau-type)))
                  (let ()
@@ -951,7 +1048,6 @@
                                                 (list expanded-type-1 expanded-type-2)) 
                                         stx))))))))))
            ;; NOTE: user defined functions
-
            ;; FIXME: Uncomment later
            (begin
              #| (check-func |#
@@ -980,14 +1076,15 @@
                           ((par par)
                            (par-exp-value-part
                              (extract 
-                               (local-expand
+                               (local-expand-memo
                                  #`(syntax-parameterize
                                      ((typecheck-mode #,typecheck-mode-on)
                                       ;;  NOTE: whenever a child func-call macro is called,
                                       ;         func-call-box will be populated
                                       (func-call-box #,subfunc-call-box-value)
                                       (func-is-called-inside-argument #t))
-                                     par) 'expression '()))))
+                                     par) 'expression '()
+                                 #:reset-memo #t))))
                           #'par-exp-value-part)))
                     (func-args-list-casted_ #`(list #,@func-args-list-expanded))
                     (func-slice-range (func-info-output-range (hash-ref funcs-info-GLOBAL func-vs)))
@@ -1004,7 +1101,7 @@
                                                ((list 'dual-b _) 'dual-b)
                                                ((list t _) t))))
 
-                    (func-return-symbol (gensym func-str))
+                    (func-return-symbol (gensym_ func-str))
                     ;; NOTE: Read func-call-box, possibly populated by child func-call macro
                     (func-call-box-value (syntax-parameter-value #'func-call-box))
                     (func-argument-names (for/list ((arg (in-list func-args-list-expanded))
@@ -1140,7 +1237,7 @@
    [({~literal factor} primary "^" factor)
                  (error "exponention is not implemented")]
    [({~literal factor} number)
-    (with-syntax ((expanded (local-expand #'number 'expression '())))
+    (with-syntax ((expanded (local-expand-memo #'number 'expression '())))
       (syntax-track-origin (syntax/loc stx expanded) #'number #'expr))]))
 
 
@@ -1149,7 +1246,7 @@
    stx
    [(_ (unop "-") expr-stx)
     (with-syntax*
-      ((expanded (local-expand #'expr-stx 'expression '()))
+      ((expanded (local-expand-memo #'expr-stx 'expression '()))
        (expanded-atom (atom-number #'expanded)))
       (let ((expanded-base-type (syntax-property #'expanded 'landau-type)))
         (cond
@@ -1184,7 +1281,7 @@
     (syntax/loc stx expr-stx)]
 
    [(_ number)
-    (with-syntax ((expanded (local-expand #'number 'expression '())))
+    (with-syntax ((expanded (local-expand-memo #'number 'expression '())))
       (syntax-track-origin (syntax/loc stx expanded) #'number #'expr))]
    ))
 
@@ -1192,7 +1289,7 @@
   (syntax-parse 
    stx
    [(_ number)
-    (with-syntax ((expanded (local-expand #'number 'expression '())))
+    (with-syntax ((expanded (local-expand-memo #'number 'expression '())))
       (syntax-track-origin (syntax/loc stx expanded) #'number #'expr))] 
    
    [(_ "(" expr-stx ")")
@@ -1407,7 +1504,7 @@
                       "{" body "}")
      (let* ((name_ (syntax->datum #'name))
             (name-str (symbol->string name_))
-            (func-return-value (gensym name-str))
+            (func-return-value (gensym_ name-str))
             (func-return-type (parse-type (syntax->datum #'type)))
             (fake-src-pos 0)
             (func-data-list (hash-ref
@@ -1753,8 +1850,8 @@
               (let*
                ((expanded-list
                  (for/list ((arr-item (in-list (syntax-e #'(arr-item*.par-value ...)))))
-                           (local-expand arr-item 'expression '())))
-                (constant-array-symbol (gensym (syntax->datum #'name))))
+                           (local-expand-memo arr-item 'expression '())))
+                (constant-array-symbol (gensym_ (syntax->datum #'name))))
                (with-syntax ((constant-array-stx (datum->syntax stx constant-array-symbol)))
                  (hash-set! constants (syntax->datum #'name)
                             (constant constant-array-symbol type (list->rl-vector expanded-list)))
@@ -1764,7 +1861,7 @@
                                    stx
                                    `(_define-var ,#'constant-array-stx ,type (_rl-vector ,expanded-list) #t)))))))
              (else
-              (let* ((expanded (local-expand #'value 'expression '()))
+              (let* ((expanded (local-expand-memo #'value 'expression '()))
                      (value (atom-number expanded))
                      (value-type (syntax-property expanded 'landau-type))
                      (value
@@ -1800,7 +1897,7 @@
     (({~literal parameter} "parameter" "[" size "]" name:id)
      
      (check-duplicate-parameter (syntax->datum #'name) stx)
-     (let* ((expanded-size (local-expand #'size 'expression '())))
+     (let* ((expanded-size (local-expand-memo #'size 'expression '())))
               
        (hash-set! parameters (syntax->datum #'name)
                   (list expanded-size))
@@ -1817,6 +1914,8 @@
     (get-value:get-value-cls
 
      (with-syntax ((name #'get-value.name))
+       #;(displayln (string->symbol (format "~a~a" (build-string padding (lambda (x) #\space))
+                                   'get-value)))
        (define tik (current-inexact-milliseconds))
        (let*-values
            (((name-symb) (syntax->datum #'name))
@@ -1831,7 +1930,7 @@
             ((name-str) (symbol->string name-symb))
             ((dx-name-str-in-current-al) (syntax-parameter-value #'dx-name-in-current-al))
             ((ctx) (syntax-parameter-value #'func-context))
-            ((idx) (timeit! TIME-TABLE 'local-expand (thunk (local-expand #'get-value.index 'expression '()))))
+            ((idx) (timeit! TIME-TABLE 'local-expand-memo (thunk (local-expand-memo #'get-value.index 'expression '()))))
             ((value type name-is-dx src-pos)
              (timeit/values! TIME-TABLE 'search-name (thunk (search-name stx ctx name-symb #'name dx-name-str-in-current-al get-name-mode-on idx))))
 
@@ -1843,7 +1942,7 @@
                                                (getter-is-var? getter-info)))
             ((index-start-expanded) (if is-slice 
                                       (if (syntax->datum #'get-value.index-start)
-                                        (timeit! TIME-TABLE 'local-expand-2 (thunk (local-expand #'get-value.index-start 'expression '())))
+                                        (timeit! TIME-TABLE 'local-expand-memo-2 (thunk (local-expand-memo #'get-value.index-start 'expression '())))
                                         0)
                                       #f))
 
@@ -1860,10 +1959,11 @@
                         (index-start-expanded index-start-expanded)
                         ;; NOTE: nonsense values used to retrieve info in compile time. They should not be in genetated code.
                         ;; If they are, this is a bug.
-                        (real-nonsense #'(error "bug: real-nonsense in runtime"))
-                        (nonsense #'(error "bug: nonsense in runtime"))
-                        (type-check-nonsense-val #'(error "bug: type-check-nonsense-val in runtime"))
-                        (type-check-nonsense-der #'(error "bug: type-check-nonsense-der in runtime"))
+                        ;; FIXME format -> error
+                        (real-nonsense #'(format "bug: real-nonsense in runtime"))
+                        (nonsense #'(format "bug: nonsense in runtime"))
+                        (type-check-nonsense-val #'(format "bug: type-check-nonsense-val in runtime"))
+                        (type-check-nonsense-der #'(format "bug: type-check-nonsense-der in runtime"))
                         (dual-bundle-nonsense
                          (syntax/loc stx (list type-check-nonsense-val type-check-nonsense-der))))
            #| (displayln name-vs) |#
@@ -2058,17 +2158,17 @@
                    ((list 'slice 'int)
                     (raise-syntax-error #f "int slices are not supported, yet" #'name)))
                  )))))
-             (define tok (current-inexact-milliseconds))
-             (hash-update! TIME-TABLE 'head-time (lambda (old-time) (fl+ old-time (fl- get-value-head-time tik))))
-             (hash-update! TIME-TABLE 'tail-time (lambda (old-time) (fl+ old-time (fl- tok get-value-head-time))))
+             #| (define tok (current-inexact-milliseconds)) |#
+             #| (hash-update! TIME-TABLE 'head-time (lambda (old-time) (fl+ old-time (fl- get-value-head-time tik)))) |#
+             #| (hash-update! TIME-TABLE 'tail-time (lambda (old-time) (fl+ old-time (fl- tok get-value-head-time)))) |#
              #| (displayln (format "get-value head-time: ~a" (hash-ref TIME-TABLE 'head-time 0.0))) |#
              #| (displayln (format "  get-value search-name time: ~a" (hash-ref TIME-TABLE 'search-name 0.0))) |#
              #| #1| (displayln (format "    get-value search-constant time: ~a" (hash-ref TIME-TABLE 'search-constant 0.0))) |1# |#
              #| (displayln (format "    get-value search-variable time: ~a" (hash-ref TIME-TABLE 'search-variable 0.0))) |#
              #| (displayln (format "    get-value HASH-HIT: ~a" HASH-HIT)) |#
              #| #1| (displayln (format "    get-value search-argument time: ~a" (hash-ref TIME-TABLE 'search-argument 0.0))) |1# |#
-             #| (displayln (format "  get-value local-expand time: ~a" (hash-ref TIME-TABLE 'local-expand 0.0))) |#
-             #| (displayln (format "  get-value local-expand-2 time: ~a" (hash-ref TIME-TABLE 'local-expand-2 0.0))) |#
+             #| (displayln (format "  get-value local-expand-memo time: ~a" (hash-ref TIME-TABLE 'local-expand-memo 0.0))) |#
+             #| (displayln (format "  get-value local-expand-memo-2 time: ~a" (hash-ref TIME-TABLE 'local-expand-memo-2 0.0))) |#
              #| (displayln (format "  get-value to-landau-type time: ~a" (hash-ref TIME-TABLE 'to-landau-type 0.0))) |#
              #| (displayln (format "get-value tail-time: ~a" (hash-ref TIME-TABLE 'tail-time 0.0))) |#
              #'r
@@ -2093,7 +2193,7 @@
           (mappings-synt (datum->syntax stx maybe-mappings))
           (dx-name-str_ dx-name-str)
           (int-type (make-landau-type 'int #f))
-          (loop-var (datum->syntax stx (gensym 'loop_var)))
+          (loop-var (datum->syntax stx (gensym_ 'loop_var)))
           (mapped-idx (datum->syntax stx 'mapped_idx)))
          (datum->syntax
           stx
@@ -2124,19 +2224,17 @@
           (mappings-synt (datum->syntax stx maybe-mappings))
           (dx-name-str_ dx-name-str)
           (int-type (make-landau-type 'int #f))
-          (loop-var (datum->syntax stx (gensym 'loop_var)))
+          (loop-var (datum->syntax stx (gensym_ 'loop_var)))
           (mapped-idx (datum->syntax stx 'mapped_idx))
           (dual-b-derivative
-            ;; FIXME
-            list
-           #| (get-derivative-stx |# 
+           (get-derivative-stx 
            #|   ;; FIXME get-value emited by func-call will fail here |#
            #|   ; add function return variables var-decl before expansion |#
-           #|  (extract |#
-           #|   (local-expand |#
-           #|    #`(syntax-parameterize |#
-           #|       ((dx-name-in-current-al '#,dx-name-str)) |#
-           #|       #,assignation-rigth-part) 'expression '()))) |#
+            (extract
+             (local-expand-memo
+              #`(syntax-parameterize
+                 ((dx-name-in-current-al '#,dx-name-str))
+                 #,assignation-rigth-part) 'expression '() #:reset-memo #t)))
            ))
          (datum->syntax
           stx
@@ -2282,7 +2380,7 @@
              (thunk list
                #| (get-derivative-stx |#
                #|   (extract |#
-               #|     (local-expand |#
+               #|     (local-expand-memo |#
                #|       #`(syntax-parameterize |#
                #|           ((dx-name-in-current-al '#,dx-name-str)) |#
                #|           #,assignation-rigth-part) 'expression '()))) |#
@@ -2410,7 +2508,7 @@
              stx
              `(_begin 
                 ;; FIXME var-decl will add variable to the current-level, because it is
-                ;; local-expanded without new context
+                ;; local-expand-memoed without new context
                 (var-decl (type ,#'function-type) ,#'function-name)
                 ,#'func-body)))))))
 
@@ -2474,23 +2572,26 @@
                              "=" value:expr)
      (let ((func-call-info-pair-list (make-state (list))))
       (with-syntax* 
-        ((index-exp (timeit! TIME-TABLE 'index-exp (thunk (local-expand #'getter.index 'expression '()))))
-         ;; NOTE: expand to get the value-type. If value-type is dual then local-expand it for each dx
+        ((index-exp (timeit! TIME-TABLE 'index-exp (thunk (local-expand-memo #'getter.index 'expression '()))))
+         ;; NOTE: expand to get the value-type. If value-type is dual then local-expand-memo it for each dx
          ;; Typecheck mode is also needed because before the first expansion some variables are
          ; not declared. For example, inlined function variable. This will cause `name not found`
          ; syntax error if expand without typecheck-mode.
+         ;; FIXME uncomment
          (value-exp-typecheck-mode (timeit! TIME-TABLE 'typecheck-mode 
-                                            (thunk (extract (local-expand
+                                            (thunk (extract (local-expand-memo
                                                               #`(syntax-parameterize
                                                                   ((typecheck-mode #t)
                                                                    ;; NOTE: func-call populates this table 
                                                                    (func-call-box #,func-call-info-pair-list))
-                                                                  value) 'expression (list)))))))
+                                                                  value) 'expression (list)
+                                                              #:reset-memo #t)))))
+         )
 
         ;; NOTE: List of inlined functions called in the right-hand side of the assignation. 
         (define inlined-functions (timeit! TIME-TABLE 'func-ret-assign_
                                            (thunk (make-inline-functions-stx stx (read-state func-call-info-pair-list)))))
-        ;; NOTE: local-expand it to expand var-decl macro genetated for the function's return
+        ;; NOTE: local-expand-memo it to expand var-decl macro genetated for the function's return
         ; variable and add it to the current variables
         (define funcs-ret-assign 
           (timeit! TIME-TABLE 'func-ret-assign
@@ -2498,8 +2599,10 @@
                             (syntax-parse item
                               ((_begin func-var-decl body)
                                (with-syntax
-                                 ((func-var-decl-exp (local-expand #'func-var-decl 'expression (list #'define)))
-                                  (body-exp (local-expand #'body 'expression (list #'define))))
+                                 ((func-var-decl-exp (local-expand-memo #'func-var-decl 'expression (list #'define)
+                                                                        #:reset-memo #t))
+                                  (body-exp (local-expand-memo #'body 'expression (list #'define)
+                                                               #:reset-memo #t)))
                                  (datum->syntax stx `(_begin ,#'func-var-decl-exp ,#'body-exp))
                                  )))))))
         (when (syntax->datum #'getter.index)
@@ -2512,12 +2615,13 @@
            (value-exp (timeit! TIME-TABLE 'value-exp 
                                (thunk (match (target-lang TARGET)
                                         ('ansi-c
-                                         (extract (local-expand
+                                         (extract (local-expand-memo
                                                  #`(syntax-parameterize
                                                      ((expand-value-only #t))
-                                                     value) 'expression (list))))
+                                                     value) 'expression (list)
+                                                 #:reset-memo #t)))
                                         ('racket #'(void)
-                                         #| (local-expand |#
+                                         #| (local-expand-memo |#
                                          #|           #`(syntax-parameterize |#
                                          #|               ((expand-value-only #t)) |#
                                          #|               (begin |#
@@ -2532,7 +2636,10 @@
              ((name_) (syntax->datum #'name))
              ((name-str) (symbol->string name_))
              ((slice-colon_) (syntax->datum #'getter.slice-colon))
-             ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
+             ((value-type-hash-key) (syntax->hash-key #'value))
+             ((value-type) ;; (hash-ref VALUE-TYPES value-type-hash-key)
+                          (syntax-property #'value-exp-typecheck-mode 'landau-type)
+                           )
              ((symbol full-type src-pos) (timeit/values! TIME-TABLE 'search-left-hand-side-name 
                                                          (thunk (search-left-hand-side-name stx ctx #'name))))
              ((left-hand-getter-info) (timeit! TIME-TABLE 'left-hand-getter-info
@@ -2548,7 +2655,11 @@
                               (thunk (get-slice-start-and-range 
                                        stx 
                                        slice-colon_ 
-                                       (if slice-colon_ #'getter.index-start #'#f) (if slice-colon_ #'getter.index-end #'#f) maybe-array-range)))))
+                                       (if slice-colon_ #'getter.index-start #'#f) (if slice-colon_ #'getter.index-end #'#f) maybe-array-range))))
+             )
+            #| (hash-set! VALUE-TYPES value-type-hash-key value-type) |#
+            #| (pretty-print VALUE-TYPES) |#
+            
             (when (and (equal? left-type 'int)
                        (equal? value-type 'real))
               (raise-syntax-error #f "assignation of real to integer is not allowed" stx))
@@ -2842,8 +2953,8 @@
     [(_ "(" b-expr ")") #'b-expr]
     [(_ "(" n1 ({~literal comp-op} op) n2 ")")
      (with-syntax* (
-                    (val1 (local-expand #'n1 'expression '()))
-                    (val2 (local-expand #'n2 'expression '())))
+                    (val1 (local-expand-memo #'n1 'expression '()))
+                    (val2 (local-expand-memo #'n2 'expression '())))
        (throw-if-not-int #'val1 "Only 'int allowed inside the `if` condition.")
        (throw-if-not-int #'val2 "Only 'int allowed inside the `if` condition.")
        (quasisyntax/loc stx #,(match (syntax->datum #'op)
@@ -2993,7 +3104,7 @@
                      (dx-slice-range dx-slice-range)
                      (df-index-start-expanded df-index-start-expanded)
                      (df-slice-range df-slice-range)
-                     (value-exp (extract (local-expand
+                     (value-exp (extract (local-expand-memo
                                           #`(syntax-parameterize
                                                 ((expand-value-only #t))
                                               der-value) 'expression '())))
@@ -3180,7 +3291,7 @@
                       (func-ret-slice-idx (datum->syntax stx 'func_slice_idx))
                       (dx-idx (if (attribute dx-idx) #'dx-idx #'#f))
                       (dx-name-str (symbol->string (syntax->datum #'dx-name)))
-                      (expanded-value (extract (local-expand
+                      (expanded-value (extract (local-expand-memo
                                                 #`(syntax-parameterize
                                                       ((typecheck-mode #t))
                                                     value) 'expression '())))
@@ -3220,7 +3331,7 @@
                       (let ((dx-name-str (symbol->string (syntax->datum #'dx-name))))
                         (get-derivative-stx
                          (extract
-                          (local-expand
+                          (local-expand-memo
                            #`(syntax-parameterize
                                  ((dx-name-in-current-al '#,dx-name-str))
                                value) 'expression '()))))))
@@ -3369,13 +3480,13 @@
     (({~literal print} "print" (~optional str #:defaults ((str #'debug))) expr)
      (with-syntax* ((line (syntax-line stx))
                     (str (symbol->string (syntax->datum #'str)))
-                    (expr-expanded-typecheck (extract (local-expand
+                    (expr-expanded-typecheck (extract (local-expand-memo
                                                        #`(syntax-parameterize
                                                              ((typecheck-mode #t))
                                                            expr) 'expression '())))
                     (type (format "~a" (syntax-property #'expr-expanded-typecheck 'landau-type)))
                     (val (if (equal? #'type #'"dual-b") 
-                               (extract (local-expand
+                               (extract (local-expand-memo
                                           #`(syntax-parameterize
                                                 ((expand-value-only #t))
                                               expr) 'expression '()))
@@ -3393,15 +3504,15 @@
 (define-syntax (get-derivative stx)
   (syntax-parse stx
     ((_ get-value-1 "'" get-value-2)
-     (let* ((df-val (extract (local-expand
+     (let* ((df-val (extract (local-expand-memo
                               #`(syntax-parameterize
                                     ((typecheck-mode #t))
                                   get-value-1) 'expression '())))
-            ;  (dx-val-typecheck-mode (extract (local-expand
+            ;  (dx-val-typecheck-mode (extract (local-expand-memo
             ;                                        #`(syntax-parameterize
             ;                                           ((typecheck-mode #t))
             ;                                           get-value-2) 'expression '())))
-            (dx-val-get-name-mode (extract (local-expand
+            (dx-val-get-name-mode (extract (local-expand-memo
                                             #`(syntax-parameterize
                                                   ((get-name-mode #t))
                                                 get-value-2) 'expression '())))
@@ -3432,7 +3543,7 @@
                           (dual-b-derivative
                            (get-derivative-stx
                             (extract
-                             (local-expand
+                             (local-expand-memo
                               #`(syntax-parameterize
                                     ((dx-name-in-current-al '#,dx-name-str))
                                   get-value-1) 'expression '())))))
