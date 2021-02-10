@@ -163,7 +163,35 @@ real[DIM] jupsatsystem (real t, real[DIM] state_and_derivatives,
   real[NGRAV] dv_0_dy
   real[NGRAV] dv_0_dz
 
-  rot[:] = jupiter_rotation_matrix(t)
+  real[9] jupiter_rotation_matrix
+
+  real T = t / 36525 
+  real alpha_0 = pole_ra[0]  + pole_ra[1] * T
+  real delta_0 = pole_dec[0] + pole_dec[1] * T
+  real W = (pm[0] + pm[1] * t) * pi / 180.0
+
+  for i = [0 : 5] {
+    real J = (Jabcde_0[i] + Jabcde_T[i] * T) * pi / 180.0
+    alpha_0 += nut_prec_ra[i]  * sin(J)
+    delta_0 += nut_prec_dec[i] * cos(J)
+  }
+
+  alpha_0 *= pi / 180.0
+  delta_0 *= pi / 180.0
+  
+  # Rz(alpha + pi * 0.5) * Rx(pi * 0.5 - delta) * Rz(w)
+
+  jupiter_rotation_matrix[0] = -sin(alpha_0) * cos(W) - cos(alpha_0) * sin(delta_0) * sin(W)
+  jupiter_rotation_matrix[1] =  sin(alpha_0) * sin(W) - cos(alpha_0) * sin(delta_0) * cos(W)
+  jupiter_rotation_matrix[2] =  cos(alpha_0) * cos(delta_0)
+  jupiter_rotation_matrix[3] =  cos(alpha_0) * cos(W) - sin(alpha_0) * sin(delta_0) * sin(W)
+  jupiter_rotation_matrix[4] = -cos(alpha_0) * sin(W) - sin(alpha_0) * sin(delta_0) * cos(W)
+  jupiter_rotation_matrix[5] =  cos(delta_0) * sin(alpha_0)
+  jupiter_rotation_matrix[6] =  cos(delta_0) * sin(W)
+  jupiter_rotation_matrix[7] =  cos(delta_0) * cos(W)
+  jupiter_rotation_matrix[8] =  sin(delta_0)
+
+  rot[:] = jupiter_rotation_matrix[:]
   
   # Gravitational potential
   for i = [0 : NSAT]

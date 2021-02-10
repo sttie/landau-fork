@@ -1,4 +1,4 @@
-#lang racket/base
+#lang debug racket/base
 
 (require 
   (for-syntax racket/base
@@ -94,85 +94,6 @@
 (define-for-syntax (log-debug msg [force-log #f])
   (unless (and (not debug-compile) force-log)
     (displayln msg)))
-
-
-(define-for-syntax VALUE-TYPES-NEW (make-hash))
-
-(define-for-syntax VALUE-TYPES
- (hash 
-   #"0ff222cdd4408ca58ac995a1f20752b7"  'real
-   #"0f62c44f5c5b17c3cd52003ee2c92c5a"  'dual-b
-   #"75d58e28f7497e2f6081775bea001b76"  '(dual-b (range-placeholder))
-   #"817b48be2c97ce698ea0d4b97ee50c00"  'dual-b
-   #"0fac74f76d20b0bbc0eaab712243d6f8"  'dual-b
-   #"6d12f0431953410d0e4113e263f50dba"  'real
-   #"af30d25a6e2d86bd4e0af595b32618be"  'real
-   #"c2613422de15158d408f431a539fd12a"  'dual-b
-   #"9d3c52b2b53435ee049290b33ddc4441"  'real
-   #"744a5fd711615964e04bb6024affc193"  'dual-b
-   #"0c9e34aca91dec3696cfa85a60192f8d"  'real
-   #"9f4849e28bacb8a3649529076f16a98c"  'real
-   #"336edbd2543ac61e668c69b9c9e8ab9a"  '(dual-b (range-placeholder))
-   #"472125def853f2ea70fcc516dcec09d1"  'real
-   #"17efa878503f88dca060e5af16202e7e"  'real
-   #"f80b95c52ecbd89882d33297df9c38e8"  '(dual-b (range-placeholder))
-   #"b11dab1f0ce28f7746d153b1b3bf7ceb"  'dual-b
-   #"3fe5af74ccb45f5c7f8b081007a77ba9"  'dual-b
-   #"55e9a4db6d38df6c7814053aad2d4119"  'dual-b
-   #"e681ef7f607beec317e42716139d91c9"  '(real (range-placeholder))
-   #"12e8497abfea00685c7b48518f56bea9"  'dual-b
-   #"33580faac6102c1787f3fa4f69e013b9"  'dual-b
-   #"6e92cd2c0191c7a7fec870b005476fd4"  'dual-b
-   #"5a38d50bd153cb474b346004ab490b74"  '(dual-b (range-placeholder))
-   #"e69dc9f1dc690d89d5673fe30ac6940a"  'real
-   #"61106879ee152cb3b33d8a72f9e399c2"  'dual-b
-   #"8465230e823fd9aa28be42f5a4930707"  'dual-b
-   #"5758442c8417182769a723f771e55ec2"  'real
-   #"c894053d1e92ac7c626750338a253210"  '(dual-b (range-placeholder))
-   #"166de58ac6cb0c9431bce1ffd7b82da8"  'real
-   #"8d74e6539e7da0135c49b983de10447f"  '(dual-b (range-placeholder))
-   #"89df0fb75821c5319ade5eebc39cb08d"  'dual-b
-   #"3bb4cc2a3091e4f9ba793916c200909e"  '(real (range-placeholder))
-   #"019616041ba0abfecca405e67f212fea"  'dual-b
-   #"2076b6a5914da49d20a2b7433be47586"  '(dual-b (range-placeholder))
-   #"50ef51916fc809d83b1f8d33fb9911ae"  'real
-   #"dd4b2e22e1c277b270ed280834832e3f"  '(dual-b (range-placeholder))
-   #"2f4713337489f4e513cd8f1978b3728a"  'dual-b
-   #"c501a0f1e8b444a1be0eb99b589df7cb"  'real
-   #"c543fc1904c3af1f9d4847af7c15919b"  'dual-b
-   #"39369e2621e07e26d3a0b17a71fa8ec8"  'dual-b
-   #"23b32ab978252a9c6fb8789f49b88339"  'real
-   #"d29db8b6678055b655a9bffa757477b5"  'dual-b
-   #"d2e0a7cb4b350e9c524809b5d86b6f90"  '(dual-b (range-placeholder))
-   #"9c5822b94862d355fd1fa8522482ba05"  'dual-b
-   #"3d63977c04904df0722c4ffab0ebf9be"  'dual-b
-   #"b86bb79082f1a6f3199587d8562ed398"  '(dual-b (range-placeholder))
-   #"ff0ee445f3fe1dcffd1b1d855be8ba82"  'dual-b
-   #"6b4b20724a21466037210b14cec15cbc"  'dual-b
-   #"819235d83bad771223573cc18bff834b"  'dual-b
-   #"0d0ebb98f6aaaf1a8e53e93c23b83b8d"  'real
-   #"f645ba504d7b0f96a389dfa5395db0b5"  'real
-   #"6eec82b50c6fd4f3e9beff8da66f30c8"  '(dual-b (range-placeholder))
-   #"ad5f6fc23be6f5ea1127dee67d70fb0a"  'dual-b
-   #"d78836983a9544fa529d0ca42e6dca20"  '(dual-b (range-placeholder))
-   #"aa0a8886227fba1dbb8f3430e3eb3d25"  '(real (range-placeholder))
-   #"0a96ceb7e2e2e553daa91c2add037115"  '(real (range-placeholder))
-   #"03b29cce7d3a0aa058393a981b2f4271"  'real
-   #"f6b44dcdeda82f1e7be83b1b72ffab5a"  'dual-b
-   #"6ff639a58db4428f1e315689a6b7f24e"  '(dual-b (range-placeholder))
-   #"788446725089b7bfb9a5cf28fe11e1d1"  'dual-b
-   #"d13ffd231ac9dedb5ba97a415b7d96fc"  '(real (range-placeholder))
-   #"ce7312928ff7f6faa4fde37fbba203ea"  'dual-b
-   #"a44ab97bcee78c3267c4a03d5115e435"  'dual-b
-   #"f0138aea467ed70a2687b6b4e26f44d0"  'dual-b
-   #"9da95033896a25c02d3642ebafd95b02"  '(dual-b (range-placeholder))
-   #"54bd29e38072fa7b4e491a1f269863a3"  'dual-b
-   #"41cee5d6e9b950fd78a918468c3191ff"  'real
-   #"602c44a7c58040e9d097f1bf1f12e21d"  'dual-b
-   #"f8c50b8e9344c7339026595dfd1d8d27"  'real
-   #"689f82c5f99899ec687efa70244b04c8"  'real
-   #"352f3816255a10f9990031b7b3b05d8d"  'int)
-  )
 
 
 (begin-for-syntax
@@ -413,11 +334,13 @@
   (syntax-parse stx
     [({~literal program} body ...)
      (let*-values
-      (((functions-data-assocs-list)
+      (((tik) (current-inexact-milliseconds))
+       ((functions-data-assocs-list)
        (parameterize
         ([current-namespace (module->namespace (collection-file-path "backrun.rkt" "landau"))])
         (begin
          (eval stx)))))
+      (define tok (current-inexact-milliseconds))
       (set! functions-data-ht-GLOBAL (make-hash (cadr functions-data-assocs-list)))
       (set! funcs-info-GLOBAL (car functions-data-assocs-list))
       (let-values
@@ -2364,7 +2287,7 @@
            (der-vec-synt (datum->syntax stx #'der-vec-symb))
            (dx-range (check-result 
                       stx 
-                      (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" 
+                      (format "bug: get-der-variable-dx-range retured #f for ~a ~a" 
                               (var-symbol-.name name-vs) 
                               dx-name-str) 
                       (get-der-variable-dx-range name-vs dx-name-str stx)))
@@ -2374,16 +2297,16 @@
            (mapped-idx (datum->syntax stx 'mapped_idx))
            (dx-name-str_ dx-name-str)
            (slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
+           ;;(dummy1 #RRassignation-rigth-part)
            (dual-b-derivative
             (timeit! TIME-TABLE 'get-derivative-stx
-                     ;; FIXME 
-             (thunk list
-               #| (get-derivative-stx |#
-               #|   (extract |#
-               #|     (local-expand-memo |#
-               #|       #`(syntax-parameterize |#
-               #|           ((dx-name-in-current-al '#,dx-name-str)) |#
-               #|           #,assignation-rigth-part) 'expression '()))) |#
+             (thunk
+               (get-derivative-stx
+                 (extract
+                   (local-expand
+                     #`(syntax-parameterize
+                         ((dx-name-in-current-al '#,dx-name-str))
+                         #,assignation-rigth-part) 'expression '())))
                ))))
           (if (getter-is-slice? left-hand-getter-info)
             (datum->syntax
@@ -2637,9 +2560,7 @@
              ((name-str) (symbol->string name_))
              ((slice-colon_) (syntax->datum #'getter.slice-colon))
              ((value-type-hash-key) (syntax->hash-key #'value))
-             ((value-type) ;; (hash-ref VALUE-TYPES value-type-hash-key)
-                          (syntax-property #'value-exp-typecheck-mode 'landau-type)
-                           )
+             ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
              ((symbol full-type src-pos) (timeit/values! TIME-TABLE 'search-left-hand-side-name 
                                                          (thunk (search-left-hand-side-name stx ctx #'name))))
              ((left-hand-getter-info) (timeit! TIME-TABLE 'left-hand-getter-info
@@ -2769,16 +2690,18 @@
                             (with-syntax*
                               ((dual-b-value #'value-exp-value-part)
                                (assertion-loops-list
-                                 (timeit! TIME-TABLE 'make-der-assignation-loops-list/array (thunk (make-der-assignation-loops-list/array stx
-                                                                                                                                          ctx
-                                                                                                                                          name-vs
-                                                                                                                                          dx-names
-                                                                                                                                          #'value
-                                                                                                                                          #'al-index-symb
-                                                                                                                                          left-hand-getter-info
-                                                                                                                                          #'slice-range
-                                                                                                                                          #'index-start-expanded_
-                                                                                                                                          #'index-exp)))))
+                                 (timeit! TIME-TABLE 'make-der-assignation-loops-list/array
+                                  (thunk
+                                   (make-der-assignation-loops-list/array stx
+                                    ctx
+                                    name-vs
+                                    dx-names
+                                    #'value
+                                    #'al-index-symb
+                                    left-hand-getter-info
+                                    #'slice-range
+                                    #'index-start-expanded_
+                                    #'index-exp)))))
                               (if (getter-is-slice? left-hand-getter-info)
                                 (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
                                               (datum->syntax stx

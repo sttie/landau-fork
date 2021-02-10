@@ -71,6 +71,10 @@
       ;; #RR(hash-has-key? memo key)
       ;; #RRkey
       ;; #RRmemo
+      ;; FIXME uncomment `if` expression and delete this
+      #;(with-syntax ((value (local-expand stx context-v stop-ids)))
+        (hash-set! memo key #'value)
+        #'value)
       (if (hash-has-key? memo key)
         (hash-ref memo key)
         (with-syntax ((value (local-expand stx context-v stop-ids)))
