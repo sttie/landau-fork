@@ -3,14 +3,12 @@
 ERAPARH=../era
 BUILDCONF=Release64OSX
 BUILDPATH=Release64OSX/GNU-MacOSX/libmoons.dylib
-SATNAME=nep-sat
-SATPATH=nepsat
 
 set -e
 
 echo "Compling .dau to .c"
-time racket ${SATNAME}.dau -c -extfl
-mv ${SATNAME}.c ./moons/src/
+time racket nep-sat.dau
+mv nep-sat.c ./moons/src/
 cd moons
 
 echo "Building libmoons"
@@ -20,8 +18,7 @@ cd ../../
 echo "Coping libmoons.dylib to era/lib64"
 cp ./tests/moons/dist/${BUILDPATH} ${ERAPARH}/lib64/
 
-cd ${ERAPARH}/${SATPATH}
-ERA_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+cd ${ERAPARH}/nepsat
 echo "Checkout to landau-test branch"
 git checkout landau-test
 
@@ -35,9 +32,9 @@ racket db_to_csv.slon > lsm_db_new.csv
 echo "Comparing lsm_db_new.csv with lsm_db_old.csv"
 if [[ $(diff lsm_db_old.csv lsm_db_new.csv) == "" ]]
 then
-  echo "Integration test C -- PASSED"
+  echo "Integration test -- PASSED"
 else
-  echo "Integration test C -- FAILED"
+  echo "Integration test -- FAILED"
   printf "To open vimdiff press y:"
   read -r
   if [[ $REPLY == "y" ]]
@@ -45,6 +42,3 @@ else
     vimdiff -u NONE lsm_db_old.csv lsm_db_new.csv
   fi
 fi
-
-echo "Back to initial era branch"
-git checkout ${ERA_BRANCH}
