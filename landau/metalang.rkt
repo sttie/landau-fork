@@ -124,9 +124,13 @@
                    ('racket
                     (quasisyntax/loc stx (define name value)))
                    ('ansi-c
-                    (with-syntax ((type-expd (expand-type #'type))
-                                  (const?_ (attribute const?)))
-                      (quasisyntax/loc stx (c-declare-var #,(syntax->string #'name) #,#'type-expd 'on-stack (to-string value) #,#'const?_))))))
+                    (with-syntax* ((type-expd (expand-type #'type))
+                                   (const?_ (attribute const?)))
+                                  (quasisyntax/loc
+                                    stx
+                                    (c-declare-var #,(syntax->string #'name) #,#'type-expd #,(if (attribute const?)
+                                                                                               (quote 'static) (quote 'on-stack))
+                                                   (to-string value) #,#'const?_))))))
 ))
 
 (define-syntax (_define-var-with-func-call stx)
