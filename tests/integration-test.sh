@@ -3,12 +3,14 @@
 ERAPARH=../era
 BUILDCONF=Release64OSX
 BUILDPATH=Release64OSX/GNU-MacOSX/libmoons.dylib
+SATNAME=nep-sat
+SATPATH=nepsat
 
 set -e
 
 echo "Compling .dau to .c"
-time racket nep-sat.dau
-mv nep-sat.c ./moons/src/
+time racket ${SATNAME}.dau
+mv ${SATNAME}.c ./moons/src/
 cd moons
 
 echo "Building libmoons"
@@ -18,7 +20,7 @@ cd ../../
 echo "Coping libmoons.dylib to era/lib64"
 cp ./tests/moons/dist/${BUILDPATH} ${ERAPARH}/lib64/
 
-cd ${ERAPARH}/nepsat
+cd ${ERAPARH}/${SATPATH}
 echo "Checkout to landau-test branch"
 git checkout landau-test
 
