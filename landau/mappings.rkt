@@ -1,7 +1,7 @@
 #lang racket
 #| INFO: Routines for generating direct and inverse mappings |#
 (require 
-  (only-in "common-for-syntax.rkt" vec->fxvec vector->carray fxvector->vector)
+  (only-in "common-for-syntax.rkt" vec->fxvec vector->carray fxvector->vector define/contract-for-syntax)
   (only-in "combinators.rkt" c-define-array)
   (for-syntax racket/syntax
               racket/base
@@ -23,8 +23,7 @@
 
 (define-for-syntax debug #f)
 
-(begin-for-syntax
-  (define/contract 
+(define/contract-for-syntax
   ;; NOTE: generate mappings for basic variable (not array)
   ;; return mappings (straigt and inverse) vectors and their symbols
   ;; WARNING: mutate need-only-value-set
@@ -97,12 +96,11 @@
 
                dx-idx-mapping)))
 
-          (else (values #f #f #f #f))))))))
+          (else (values #f #f #f #f)))))))
 
 
 ;; NOTE: WARNING: mutation derivatives-info
-(begin-for-syntax
-  (define/contract
+(define/contract-for-syntax
   (generate-mappings-for-array-variable! derivatives-info
                                          current-variables 
                                          var-name-key
@@ -220,16 +218,15 @@
                 (datum->syntax #f 
                                (make-dx-idxs-mappings-name var-name-key dx-name-str))
                 'dx-mappings)
-              dx-idx-mappings))))))))
+              dx-idx-mappings)))))))
 
 
 ;; NOTE: Traverse the keys of all needed variables names and allocate mappings vectors if variable need derivatives
 ;;       Mappings and dx-idx-mappings are allocated for function return value and function arguments
-;;       if thee belong to need-derivatives-set-GLOBAL set         
+;;       if thee belong to need-derivatives-set set         
 ;;       (e.g. df-table is empty) df-table :: Hash (String-key, (idx-type (Either (Set Int) Bool))
-;; WARNING: Mutation of need-derivatives-set-GLOBAL need-only-value-set-GLOBAL
-(begin-for-syntax
-  (define/contract 
+;; WARNING: Mutation of need-derivatives-set need-only-value-set
+(define/contract-for-syntax
   (make-mappings-decl-list-helper!
     dx-name-str
     grouped-keys-table
@@ -337,4 +334,4 @@
 
                     #'""))))))))
 
-      (syntax-e #'decl-list)))))
+      (syntax-e #'decl-list))))

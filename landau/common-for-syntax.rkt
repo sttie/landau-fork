@@ -31,6 +31,9 @@
 (provide (all-defined-out))
 (provide (for-syntax (except-out (all-defined-out) binary-op-cast)))
 
+(define-syntax-rule (define/contract-for-syntax definition type body ...)
+  (begin-for-syntax (define/contract definition type (begin body ...))))
+
 (define-for-syntax TIME-TABLE (make-hash (list (cons 'head-time 0.0)
                                                (cons 'tail-time 0.0)
                                                (cons 'local-expand-2 0.0)
@@ -305,22 +308,20 @@
       [else #t])))
       
 
-(begin-for-syntax
- (define/contract 
-   (make-need-derivatives-key arr-name-str)
-   (-> string? string?)
-   arr-name-str))
+(define/contract-for-syntax
+  (make-need-derivatives-key arr-name-str)
+  (-> string? string?)
+  arr-name-str)
 
-(begin-for-syntax
-  (define/contract
-    (get-der-variable-dx-range-helper df-name dx-name need-derivatives-table stx)
-    (-> var-symbol/c (or/c string? false/c) need-derivatives-table/c (syntax/c any/c)
-        (or/c integer? false/c))
-    (cond
-        ((not dx-name) #f)
-        (else
-         (fmap mapping-sizes-.mapping-period 
-               (ndt-get-mapping-sizes need-derivatives-table df-name dx-name))))))
+(define/contract-for-syntax
+  (get-der-variable-dx-range-helper df-name dx-name need-derivatives-table stx)
+  (-> var-symbol/c (or/c string? false/c) need-derivatives-table/c (syntax/c any/c)
+      (or/c integer? false/c))
+  (cond
+    ((not dx-name) #f)
+    (else
+      (fmap mapping-sizes-.mapping-period 
+            (ndt-get-mapping-sizes need-derivatives-table df-name dx-name)))))
 
 
 
@@ -331,93 +332,93 @@
 ;; - change type 'real -> 'dual-l
 ;; - allocate vector
 ;; - dx is always dual-l
-(begin-for-syntax
-  (define/contract (make-der-decl-list-helper!
-                    args
-                    dx-names-hash-set 
-                    need-derivatives-table
-                    current-variables
-                    current-arguments
-                    lang
-                    stx)
-    (-> current-arguments/c
-        dx-names-hash-set/c
-        need-derivatives-table/c
-        current-variables/c
-        current-arguments/c
-        lang/c
-        (syntax/c any/c)
-      
-        (listof any/c))
+(define/contract-for-syntax
+  (make-der-decl-list-helper!
+    args
+    dx-names-hash-set 
+    need-derivatives-table
+    current-variables
+    current-arguments
+    lang
+    stx)
+  (-> current-arguments/c
+      dx-names-hash-set/c
+      need-derivatives-table/c
+      current-variables/c
+      current-arguments/c
+      lang/c
+      (syntax/c any/c)
 
-    (let* ((dx-names dx-names-hash-set)
-           (fake-src-pos 0))
-      (for/list ((arg-kv (in-list (hash->list args))))
-        (let* ((arg-name (car arg-kv))
-               (arg-vs (var-symbol (symbol->string arg-name) fake-src-pos))
-               (arg-struct (cdr arg-kv))
-               (arg-basic-type (car (argument-type arg-struct))))
-          (when (equal? arg-basic-type 'real)
-            (let*
-                ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments)))
-              (when (hash-has-key? dx-names (symbol->string arg-name))
-                (change-arg-type!
-                 current-arguments
-                 arg-name
-                 (make-dual-type df-type 'dual-l)))
-              (unless (var-symbol/c arg-vs)
-                (error "436"))
-              (when (ndt-member? need-derivatives-table arg-vs)
-                (with-syntax
-                    ((der-vec-decl-list-forall-dx
-                      (let ((dx-keys (ndt-get-dx-names need-derivatives-table arg-vs)))
-                        (for/list ((dx-name-str (in-list dx-keys)))
-                          (let* ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments))
-                             
-                                 (arg-name-str (symbol->string arg-name))
-                                 (dx-mapped-size (check-result
-                                                   stx 
-                                                   (format 
-                                                     "bug: get-der-variable-dx-range-helper returned #f for a key: ~a ~a" 
-                                                     arg-vs
-                                                     dx-name-str) 
-                                                   (get-der-variable-dx-range-helper 
-                                                     arg-vs
-                                                     dx-name-str 
-                                                     need-derivatives-table 
-                                                     stx)))
-                                 (df-size (car (if (empty? (cadr df-type)) (list 1) (cadr df-type))))
-                                 (dx-mapped-type (make-landau-type 'real dx-mapped-size))
-                                 (dual-r-var (add-variable!
-                                              current-variables
-                                              (datum->syntax #f (make-var-der-name arg-vs dx-name-str))
-                                              ;; NOTE: it is a period number (dx range), not the vector capasity
-                                              (make-dual-type dx-mapped-type 'dual-r))))
-                            ;(log-debug (format "debug: add derivative. key: ~a" (make-var-der-name arg-name dx-name-str)))
-                            ;; NOTE: After dual-r-var been added to variables
-                            ;;       arg type is changed from 'real to 'dual-l
-                            (change-arg-type!
-                             current-arguments
-                             arg-name
-                             (make-dual-type df-type 'dual-l))
-                            (match lang ;;FIXME: refactor
-                                ('racket
-                                 (with-syntax ((der-vec (datum->syntax stx dual-r-var)))
-                                  (quasisyntax/loc stx
-                                                   (define der-vec #,(instantiate-dual-var df-type dx-mapped-size stx)))))
-                                ('ansi-c
-                                 (with-syntax* ((der-vec (symbol->string dual-r-var))
-                                               (df-size (local-expand (datum->syntax stx df-size) 'expression '()))
-                                               (arr-size (fx* (atom-number #'df-size) dx-mapped-size)))
-                                  (quasisyntax/loc stx  
-                                                   (c-define-array #,(if (target-extfloat? TARGET)
-                                                                        "long double" ;; REFACTOR
-                                                                        "double") 
-                                                                    der-vec arr-size "{ 0.0 }"))))))))))
-                  (if (equal? lang 'racket)
-                      (cons 'begin (syntax-e #'der-vec-decl-list-forall-dx))
-                      (with-syntax ((der-vec-decl-list-forall-dx_ (cons 'list (syntax-e #'der-vec-decl-list-forall-dx))))
-                        #'(flatten der-vec-decl-list-forall-dx_))))))))))))
+      (listof any/c))
+
+  (let* ((dx-names dx-names-hash-set)
+         (fake-src-pos 0))
+    (for/list ((arg-kv (in-list (hash->list args))))
+      (let* ((arg-name (car arg-kv))
+             (arg-vs (var-symbol (symbol->string arg-name) fake-src-pos))
+             (arg-struct (cdr arg-kv))
+             (arg-basic-type (car (argument-type arg-struct))))
+        (when (equal? arg-basic-type 'real)
+          (let*
+            ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments)))
+            (when (hash-has-key? dx-names (symbol->string arg-name))
+              (change-arg-type!
+                current-arguments
+                arg-name
+                (make-dual-type df-type 'dual-l)))
+            (unless (var-symbol/c arg-vs)
+              (error "436"))
+            (when (ndt-member? need-derivatives-table arg-vs)
+              (with-syntax
+                ((der-vec-decl-list-forall-dx
+                   (let ((dx-keys (ndt-get-dx-names need-derivatives-table arg-vs)))
+                     (for/list ((dx-name-str (in-list dx-keys)))
+                       (let* ((df-type (get-arg-type-helper (datum->syntax stx arg-name) current-arguments))
+
+                              (arg-name-str (symbol->string arg-name))
+                              (dx-mapped-size (check-result
+                                                stx 
+                                                (format 
+                                                  "bug: get-der-variable-dx-range-helper returned #f for a key: ~a ~a" 
+                                                  arg-vs
+                                                  dx-name-str) 
+                                                (get-der-variable-dx-range-helper 
+                                                  arg-vs
+                                                  dx-name-str 
+                                                  need-derivatives-table 
+                                                  stx)))
+                              (df-size (car (if (empty? (cadr df-type)) (list 1) (cadr df-type))))
+                              (dx-mapped-type (make-landau-type 'real dx-mapped-size))
+                              (dual-r-var (add-variable!
+                                            current-variables
+                                            (datum->syntax #f (make-var-der-name arg-vs dx-name-str))
+                                            ;; NOTE: it is a period number (dx range), not the vector capasity
+                                            (make-dual-type dx-mapped-type 'dual-r))))
+                         ;(log-debug (format "debug: add derivative. key: ~a" (make-var-der-name arg-name dx-name-str)))
+                         ;; NOTE: After dual-r-var been added to variables
+                         ;;       arg type is changed from 'real to 'dual-l
+                         (change-arg-type!
+                           current-arguments
+                           arg-name
+                           (make-dual-type df-type 'dual-l))
+                         (match lang ;;FIXME: refactor
+                           ('racket
+                            (with-syntax ((der-vec (datum->syntax stx dual-r-var)))
+                              (quasisyntax/loc stx
+                                               (define der-vec #,(instantiate-dual-var df-type dx-mapped-size stx)))))
+                           ('ansi-c
+                            (with-syntax* ((der-vec (symbol->string dual-r-var))
+                                           (df-size (local-expand (datum->syntax stx df-size) 'expression '()))
+                                           (arr-size (fx* (atom-number #'df-size) dx-mapped-size)))
+                                          (quasisyntax/loc stx  
+                                                           (c-define-array #,(if (target-extfloat? TARGET)
+                                                                               "long double" ;; REFACTOR
+                                                                               "double") 
+                                                                           der-vec arr-size "{ 0.0 }"))))))))))
+                (if (equal? lang 'racket)
+                  (cons 'begin (syntax-e #'der-vec-decl-list-forall-dx))
+                  (with-syntax ((der-vec-decl-list-forall-dx_ (cons 'list (syntax-e #'der-vec-decl-list-forall-dx))))
+                    #'(flatten der-vec-decl-list-forall-dx_)))))))))))
 
 
 (define-for-syntax (get-arg-type-helper d-name current-arguments)
@@ -486,34 +487,32 @@
     [else (error (format "unsupported type: ~v" parsed-type))]))
     
 
-(begin-for-syntax
- (define/contract
-   (check-duplicate-variable-name-helper name stx-name current-variables current-arguments function-name)
-   (-> symbol? (syntax/c any/c) current-variables/c current-arguments/c symbol? void?)
-   #| (when (search-variable name current-variables) |#
-   #|   (pretty-print current-variables) |#
-   #|   (raise-syntax-error #f "duplicate variable declaration" stx-name)) |#
-   (when (hash-has-key? constants name)
-     (raise-syntax-error #f "variable name shadows constant" stx-name))
-   (when (hash-has-key? parameters name)
-     (raise-syntax-error #f "variable name shadows parameter" stx-name))
-   (when (hash-has-key? current-arguments name)
-     (raise-syntax-error #f "variable name shadows argument" stx-name))
-   (when (equal? function-name name)
-     (raise-syntax-error #f "variable name shadows function" stx-name))))
+(define/contract-for-syntax
+  (check-duplicate-variable-name-helper name stx-name current-variables current-arguments function-name)
+  (-> symbol? (syntax/c any/c) current-variables/c current-arguments/c symbol? void?)
+  #| (when (search-variable name current-variables) |#
+       #|   (pretty-print current-variables) |#
+       #|   (raise-syntax-error #f "duplicate variable declaration" stx-name)) |#
+  (when (hash-has-key? constants name)
+    (raise-syntax-error #f "variable name shadows constant" stx-name))
+  (when (hash-has-key? parameters name)
+    (raise-syntax-error #f "variable name shadows parameter" stx-name))
+  (when (hash-has-key? current-arguments name)
+    (raise-syntax-error #f "variable name shadows argument" stx-name))
+  (when (equal? function-name name)
+    (raise-syntax-error #f "variable name shadows function" stx-name)))
 
-(begin-for-syntax
- (define/contract
-   (check-duplicate-argument-name args funcname name stx-name)
-   (-> current-arguments/c symbol? symbol? (syntax/c any/c) void?)
-   (when (equal? funcname name)
-     (raise-syntax-error #f "argument name shadows function" stx-name))
-   (when (hash-has-key? parameters name)
-     (raise-syntax-error #f "variable name shadows parameter" stx-name))
-   (when (hash-has-key? args name)
-     (raise-syntax-error #f "duplicate argument" stx-name))
-   (when (hash-has-key? constants name)
-     (raise-syntax-error #f "argument name shadows constant" stx-name))))
+(define/contract-for-syntax
+  (check-duplicate-argument-name args funcname name stx-name)
+  (-> current-arguments/c symbol? symbol? (syntax/c any/c) void?)
+  (when (equal? funcname name)
+    (raise-syntax-error #f "argument name shadows function" stx-name))
+  (when (hash-has-key? parameters name)
+    (raise-syntax-error #f "variable name shadows parameter" stx-name))
+  (when (hash-has-key? args name)
+    (raise-syntax-error #f "duplicate argument" stx-name))
+  (when (hash-has-key? constants name)
+    (raise-syntax-error #f "argument name shadows constant" stx-name)))
 
 ;; NOTE: extract syntax after syntax-parameterize
 (define-for-syntax (extract stx)
@@ -543,8 +542,7 @@
 
 (define-for-syntax debug #f)
 
-(begin-for-syntax
- (define/contract 
+(define/contract-for-syntax
   (get-symbol-helper stx name dx-name-str make-name current-variables err-msg [throw-error? #t])
   (->* ((syntax/c any/c) 
         var-symbol/c 
@@ -555,46 +553,45 @@
        (boolean?)
        (or/c (syntax/c symbol?) #f))
   (let ([var
-         (search-variable
-          (make-name name dx-name-str)
-          current-variables)])
+          (search-variable
+            (make-name name dx-name-str)
+            current-variables)])
     (cond
       [var (datum->syntax stx (variable-symbol var))]
       [else (if throw-error?
-                (raise-syntax-error #f (format "bug: ~a array not found. key: ~a"
-                                               err-msg
-                                               (make-name name dx-name-str)) stx)
-                #f)]))))
+              (raise-syntax-error #f (format "bug: ~a array not found. key: ~a"
+                                             err-msg
+                                             (make-name name dx-name-str)) stx)
+              #f)])))
 
 
 (define (is-basic-ref? ref) (equal? (car ref) 'basic-ref))
 
 (define (is-array-ref? ref) (equal? (car ref) 'array-ref))
 
-(begin-for-syntax
- (define/contract 
-   (_key<? vs-1 vs-2)
-   (-> var-symbol/c var-symbol/c 
-       boolean?)
-   (string<? (var-symbol->string vs-1)
-             (var-symbol->string vs-2)))
+(define/contract-for-syntax
+  (_key<? vs-1 vs-2)
+  (-> var-symbol/c var-symbol/c 
+      boolean?)
+  (string<? (var-symbol->string vs-1)
+            (var-symbol->string vs-2)))
 
- (define/contract 
- (group-by-names keys)
- (-> (listof df-name/c) 
-     grouped-keys-table/c)
+(define/contract-for-syntax
+  (group-by-names keys)
+  (-> (listof df-name/c) 
+      grouped-keys-table/c)
   (let* ((sorted (sort keys _key<? #:key car))
          (ht (make-hash)))
     (for ((p (in-list sorted)))
       (let ((name (car p))
             (idx (if (equal? (length p) 2)
-                     (cadr p)
-                     #f)))
+                   (cadr p)
+                   #f)))
         (if (hash-has-key? ht name)
-            (let* ((l (hash-ref ht name)))
-              (hash-set! ht name (append (list idx) l)))
-            (hash-set! ht name (list idx)))))
-    ht)))
+          (let* ((l (hash-ref ht name)))
+            (hash-set! ht name (append (list idx) l)))
+          (hash-set! ht name (list idx)))))
+    ht))
 
 (begin-for-syntax
   (define-syntax-class plus-or-minus
@@ -648,8 +645,7 @@
     (values #f #f)))
 
 
-(begin-for-syntax
- (define/contract 
+(define/contract-for-syntax
   (check-func stx func-vs func-args funcs-info current-variables current-arguments)
   (-> (syntax/c any/c) var-symbol/c (listof any/c) funcs-info/c current-variables/c current-arguments/c
       void?)
@@ -662,9 +658,9 @@
          (output-range (func-info-output-range func-info)))
     (unless (equal? arity (length func-args))
       (raise-syntax-error
-       #f
-       (format "function ~a arity mismatch: expects ~a, but given ~a" (var-symbol-.name func-vs) arity (length func-args))
-       stx))
+        #f
+        (format "function ~a arity mismatch: expects ~a, but given ~a" (var-symbol-.name func-vs) arity (length func-args))
+        stx))
     (for ((expected-arg-type (in-list args-type))
           (provided-arg (in-list func-args))
           (arg-number (in-naturals 1)))
@@ -677,60 +673,60 @@
              (var-name (syntax-property expanded-arg 'get-value-name))
              (var-is-slice? (is-slice? expanded-arg-type))
              (var-type (if var-name 
-                           (let ((var (search-variable var-name current-variables)))
-                             (if var 
-                                 (variable-type var)
-                                 (let ((arg (search-argument var-name current-arguments)))
-                                   (if arg
-                                       (argument-type arg)
-                                       #f))))
-                           #f))
+                         (let ((var (search-variable var-name current-variables)))
+                           (if var 
+                             (variable-type var)
+                             (let ((arg (search-argument var-name current-arguments)))
+                               (if arg
+                                 (argument-type arg)
+                                 #f))))
+                         #f))
              (var-base-type (if var-type (car var-type) expanded-arg-type))
              (var-range (if var-type (cadr var-type) '()))
              (var-range-expanded (if (empty? var-range)
-                                     #f 
-                                     (atom-number (local-expand (datum->syntax stx (car var-range)) 'expression '()))))
+                                   #f 
+                                   (atom-number (local-expand (datum->syntax stx (car var-range)) 'expression '()))))
 
              (expected-arg-base-type (car expected-arg-type))
              (expected-arg-range (cdr expected-arg-type)))
 
         (when (and expected-arg-range (not var-range-expanded))
           (raise-syntax-error
-           #f
-           (format "argument ~a should be an array" arg-number)
-           stx))
-                
+            #f
+            (format "argument ~a should be an array" arg-number)
+            stx))
+
         (when (and (not expected-arg-range) var-range-expanded)
           (raise-syntax-error
-           #f
-           (format "argument ~a should not be an array" arg-number)
-           stx))
+            #f
+            (format "argument ~a should not be an array" arg-number)
+            stx))
 
         (when var-is-slice?
           (raise-syntax-error
-           #f
-           (format "slices can not be passed to funcitons. Function ~a was given a slice as a ~a argument" (var-symbol-.name func-vs) arg-number)
-           stx))
-                
-                
+            #f
+            (format "slices can not be passed to funcitons. Function ~a was given a slice as a ~a argument" (var-symbol-.name func-vs) arg-number)
+            stx))
+
+
         (unless (equal? (format "~a" expected-arg-base-type) (format "~a" var-base-type))
           (unless (equal? var-base-type 'dual-l) 
             (raise-syntax-error
-             #f
-             (format "argument ~a type mismatch. Expects ~a, but ~a given."
-                     arg-number
-                     expected-arg-base-type
-                     var-base-type)
-             stx)))
-                
+              #f
+              (format "argument ~a type mismatch. Expects ~a, but ~a given."
+                      arg-number
+                      expected-arg-base-type
+                      var-base-type)
+              stx)))
+
         (unless (equal? expected-arg-range var-range-expanded)
           (raise-syntax-error
-           #f
-           (format "argument ~a range mismatch. Expects array of length ~a, but the provided argumnt has length of ~a"
-                   arg-number
-                   expected-arg-range
-                   var-range-expanded)
-           stx)))))))
+            #f
+            (format "argument ~a range mismatch. Expects array of length ~a, but the provided argumnt has length of ~a"
+                    arg-number
+                    expected-arg-range
+                    var-range-expanded)
+            stx))))))
 
 ; (begin-for-syntax
 ;   (define/contract

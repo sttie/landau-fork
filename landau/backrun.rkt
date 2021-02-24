@@ -99,14 +99,13 @@
         (eval expanded-syntax ns))
 
 
-(begin-for-syntax
-  (define/contract
-    (any->expanded-type v stx)
+(define/contract-for-syntax
+  (any->expanded-type v stx)
   (-> any/c syntax?
       landau-type/c)
- (cond
-   ((syntax? v) (eval (syntax->datum (expand-type v))))
-   (else (eval (syntax->datum (expand-type (datum->syntax stx v))))))))
+  (cond
+    ((syntax? v) (eval (syntax->datum (expand-type v))))
+    (else (eval (syntax->datum (expand-type (datum->syntax stx v)))))))
 
 
 (define-for-syntax (is-int-index stx)
@@ -117,19 +116,18 @@
     ((list 'func _ ...) #t)
     (_ #f)))
 
-(begin-for-syntax
-  (define/contract
-   (range-casting-check stx r-value-type lvalue-outer-prod-range)
-   (-> syntax? (list/c base-type/c (list/c (or/c syntax? fixnum?))) (or/c syntax? fixnum?)
-       syntax?)
-   (when (is-slice? r-value-type)
-     (with-syntax ((rvalue-slice-range (get-slice-range r-value-type)))
-       #`(unless (fx= #,lvalue-outer-prod-range #,#'rvalue-slice-range)
-           (raise-syntax-error
-             #f 
-             (format 
-               "can not cast right-hand side range ~v to the left-hand side range ~v" 
-               #,#'rvalue-slice-range #,lvalue-outer-prod-range) #'#,stx))))))
+(define/contract-for-syntax
+  (range-casting-check stx r-value-type lvalue-outer-prod-range)
+  (-> syntax? (list/c base-type/c (list/c (or/c syntax? fixnum?))) (or/c syntax? fixnum?)
+      syntax?)
+  (when (is-slice? r-value-type)
+    (with-syntax ((rvalue-slice-range (get-slice-range r-value-type)))
+      #`(unless (fx= #,lvalue-outer-prod-range #,#'rvalue-slice-range)
+          (raise-syntax-error
+            #f 
+            (format 
+              "can not cast right-hand side range ~v to the left-hand side range ~v" 
+              #,#'rvalue-slice-range #,lvalue-outer-prod-range) #'#,stx)))))
 
 
 (define-syntax (program stx)
@@ -308,64 +306,63 @@
             #,#'func-return-var-declaration-stx
             #,#'expanded-function-body)))))))
 
-(begin-for-syntax
- (define/contract 
+(define/contract-for-syntax
   (search-name-backrun stx name)
   (-> (syntax/c any/c) (syntax/c symbol?)
       ;; NOTE: real constants are not propagated in backrun
       (values (syntax/c (or/c symbol? integer? false/c)) type/c boolean? integer?))
   (let
-   ((fake-src-pos 0)
-    (is-const #t)
-    (is-not-const #f)
-    (name_ (syntax->datum name))
-    (func-name (syntax-parameter-value #'function-name)))
-     (let-values
+    ((fake-src-pos 0)
+     (is-const #t)
+     (is-not-const #f)
+     (name_ (syntax->datum name))
+     (func-name (syntax-parameter-value #'function-name)))
+    (let-values
       (((value type const? src-pos)
         (cond
           ((hash-has-key? constants name_)
            (let ((c (hash-ref constants name_)))
              (values
-              (datum->syntax stx
-                             (constant-value c))
-              (constant-type c)
-              is-const
-              fake-src-pos)))
+               (datum->syntax stx
+                              (constant-value c))
+               (constant-type c)
+               is-const
+               fake-src-pos)))
           (else
-           (begin
-            (unless (syntax-parameter-value #'current-variables)
-                    (raise-syntax-error #f "name not found" name))
-            (let ((var (search-variable
-                        name_ (syntax-parameter-value #'current-variables))))
-              (cond
-                (var
-                 (values (datum->syntax stx (variable-symbol var))
-                         (variable-type var) #f (variable-src-pos var)))
-                ((equal? name_ func-name)
-                 (let ((func-return-value (syntax-parameter-value #'function-return-value)))
-                   (values
-                    (datum->syntax stx func-return-value)
-                    (syntax-parameter-value #'function-return-type)
-                    is-not-const
-                    fake-src-pos)))
-                (else
-                 (let ((arg (search-argument
-                             name_ (syntax-parameter-value #'current-arguments))))
-                   (cond
-                     (arg
-                      (values
-                       (datum->syntax stx (argument-symbol arg))
-                       (argument-type arg)
+            (begin
+              (unless (syntax-parameter-value #'current-variables)
+                (raise-syntax-error #f "name not found" name))
+              (let ((var (search-variable
+                           name_ (syntax-parameter-value #'current-variables))))
+                (cond
+                  (var
+                    (values (datum->syntax stx (variable-symbol var))
+                            (variable-type var) #f (variable-src-pos var)))
+                  ((equal? name_ func-name)
+                   (let ((func-return-value (syntax-parameter-value #'function-return-value)))
+                     (values
+                       (datum->syntax stx func-return-value)
+                       (syntax-parameter-value #'function-return-type)
                        is-not-const
-                       fake-src-pos))
-                     (else
+                       fake-src-pos)))
+                  (else
+                    (let ((arg (search-argument
+                                 name_ (syntax-parameter-value #'current-arguments))))
                       (cond
-                        ((hash-has-key? parameters name_) (raise-syntax-error #f "parameters can not be used in expression" name))
-                        (else (raise-syntax-error #f "name not found" name))))))))))))))
+                        (arg
+                          (values
+                            (datum->syntax stx (argument-symbol arg))
+                            (argument-type arg)
+                            is-not-const
+                            fake-src-pos))
+                        (else
+                          (cond
+                            ((hash-has-key? parameters name_) (raise-syntax-error #f "parameters can not be used in expression" name))
+                            (else (raise-syntax-error #f "name not found" name))))))))))))))
       ; (println (format "~a -> ~a" name value))
       (values value type const? src-pos))
 
-)))
+    ))
 
 
 ;; TODO: Check types. They are available after zero'th compiler run
@@ -1407,113 +1404,110 @@
      (with-syntax ((expanded (local-expand #'expr1 'expression (list))))
        (syntax-track-origin (syntax/loc stx expanded) #'expr1 #'expr))]))
 
-(begin-for-syntax
-  (define/contract 
-    (arity-check func-name n-expected n-provided stx)
-    (-> string? integer? integer? (syntax/c any/c) void?)
-    (unless (equal? n-expected n-provided)
-      (raise-syntax-error
-       #f
-       (format "function ~a expects ~a parameters, but ~a provided" func-name n-expected n-provided)
-       stx))))
+(define/contract-for-syntax
+  (arity-check func-name n-expected n-provided stx)
+  (-> string? integer? integer? (syntax/c any/c) void?)
+  (unless (equal? n-expected n-provided)
+    (raise-syntax-error
+      #f
+      (format "function ~a expects ~a parameters, but ~a provided" func-name n-expected n-provided)
+      stx)))
    
-(begin-for-syntax 
-  (define/contract
-    (ref->var-symbol ref)
-    (-> backrun-ref/c var-symbol/c)
+(define/contract-for-syntax
+  (ref->var-symbol ref)
+  (-> backrun-ref/c var-symbol/c)
+  (match ref
+    ((list _ vs _) vs)))
+
+(define/contract-for-syntax
+  (bind-parameters-to-arguments inlined-function-name actions-list bindings)
+  (-> string? (listof any/c) (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
+      (listof any/c))
+  (define flat-actions-list (reverse (splice-nested actions-list)))
+  (define msg-template "bug: not self-sufficent function should not contain ~a term")
+  (define (rebind-ref _inlined-function-name ref bindings)
+    (define var-name (match ref ((list _ (var-symbol name _) _) name)))
+    (define (is-constant? _name)
+      (hash-has-key? constants (string->symbol _name)))
     (match ref
-      ((list _ vs _) vs))))
+      ((list 'array-ref vs idx) 
+       ;; NOTE: If there is no such a key, then the key is a 
+       ; local variable and should not be changed.
+       ;; NOTE: Need to either preserve or override the idx depending on the arg type:
+       ;; var -> preserve (really does not matter, because it is 0 in both cases)
+       ;; cell -> override
+       ;; array -> preserve 
+       (match (hash-ref bindings vs (thunk 'not-a-function-parameter))
 
-(begin-for-syntax
-  (define/contract (bind-parameters-to-arguments inlined-function-name actions-list bindings)
-                   (-> string? (listof any/c) (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
-                       (listof any/c))
-   (define flat-actions-list (reverse (splice-nested actions-list)))
-   (define msg-template "bug: not self-sufficent function should not contain ~a term")
-   (define (rebind-ref _inlined-function-name ref bindings)
-     (define var-name (match ref ((list _ (var-symbol name _) _) name)))
-     (define (is-constant? _name)
-       (hash-has-key? constants (string->symbol _name)))
-     (match ref
-       ((list 'array-ref vs idx) 
-        ;; NOTE: If there is no such a key, then the key is a 
-        ; local variable and should not be changed.
-        ;; NOTE: Need to either preserve or override the idx depending on the arg type:
-        ;; var -> preserve (really does not matter, because it is 0 in both cases)
-        ;; cell -> override
-        ;; array -> preserve 
-        (match (hash-ref bindings vs (thunk 'not-a-function-parameter))
+         ((func-arg-binding 'var (list 'array-ref arg-vs arg-idx))
+          (list 'array-ref arg-vs idx))
 
-          ((func-arg-binding 'var (list 'array-ref arg-vs arg-idx))
-           (list 'array-ref arg-vs idx))
+         ((func-arg-binding 'cell (list 'array-ref arg-vs arg-idx))
+          (list 'array-ref arg-vs arg-idx))
 
-          ((func-arg-binding 'cell (list 'array-ref arg-vs arg-idx))
-           (list 'array-ref arg-vs arg-idx))
+         ((func-arg-binding 'array (list 'array-ref arg-vs arg-idx))
+          (list 'array-ref arg-vs idx))
 
-          ((func-arg-binding 'array (list 'array-ref arg-vs arg-idx))
-           (list 'array-ref arg-vs idx))
+         ('not-a-function-parameter
+          (cond
+            ((is-constant? var-name) (list 'array-ref vs idx))
 
-          ('not-a-function-parameter
-           (cond
-             ((is-constant? var-name) (list 'array-ref vs idx))
+            ;; NOTE: inlined function's local variables are prepanded with _
+            (else (match ref
+                    ((list 'array-ref (var-symbol name src-pos) ref-idx)
+                     (list 'array-ref (var-symbol (make-inlined-variable-name _inlined-function-name name) src-pos) ref-idx))))))
 
+         ('constant 'constant)))))
+
+  (define (rebind-refs-list _inlined-function-name refs-list bindings)
+    (filter (lambda (x) (not (equal? x 'constant))) 
+            (for/list ((ref (in-list refs-list)))
+              (rebind-ref _inlined-function-name ref bindings))))
+
+  (for/list ((action (in-list flat-actions-list)))
+    (match action
+      ((list 'func-assign func-ref refs-list)
+       (list 'assign 
+             (rebind-ref inlined-function-name func-ref bindings)
+             (rebind-refs-list inlined-function-name refs-list bindings)))
+
+      ((list 'assign l-val-ref refs-list)
+       (list 'assign (rebind-ref inlined-function-name l-val-ref bindings)
+             (rebind-refs-list inlined-function-name refs-list bindings)))
+
+      ((list 'var-decl vs type)
+       (list 'var-decl 
              ;; NOTE: inlined function's local variables are prepanded with _
-             (else (match ref
-                  ((list 'array-ref (var-symbol name src-pos) ref-idx)
-                   (list 'array-ref (var-symbol (make-inlined-variable-name _inlined-function-name name) src-pos) ref-idx))))))
-          
-          ('constant 'constant)))))
+             (match vs 
+               ((var-symbol name src-pos)
+                (var-symbol (make-inlined-variable-name inlined-function-name name) src-pos)))
+             type))
 
-   (define (rebind-refs-list _inlined-function-name refs-list bindings)
-     (filter (lambda (x) (not (equal? x 'constant))) 
-             (for/list ((ref (in-list refs-list)))
-               (rebind-ref _inlined-function-name ref bindings))))
+      ((list 'der-annot ref-1 ref-2)
+       (error (format msg-template 'der-annot)))
 
-   (for/list ((action (in-list flat-actions-list)))
-     (match action
-       ((list 'func-assign func-ref refs-list)
-        (list 'assign 
-              (rebind-ref inlined-function-name func-ref bindings)
-              (rebind-refs-list inlined-function-name refs-list bindings)))
+      ((list 'der-apply df dx)
+       (error (format msg-template 'der-apply)))
 
-       ((list 'assign l-val-ref refs-list)
-        (list 'assign (rebind-ref inlined-function-name l-val-ref bindings)
-              (rebind-refs-list inlined-function-name refs-list bindings)))
-
-       ((list 'var-decl vs type)
-        (list 'var-decl 
-              ;; NOTE: inlined function's local variables are prepanded with _
-              (match vs 
-                ((var-symbol name src-pos)
-                 (var-symbol (make-inlined-variable-name inlined-function-name name) src-pos)))
-              type))
-
-       ((list 'der-annot ref-1 ref-2)
-        (error (format msg-template 'der-annot)))
-
-       ((list 'der-apply df dx)
-        (error (format msg-template 'der-apply)))
-
-       ((list 'discard df dx)
-        (error (format msg-template 'discard)))))))
+      ((list 'discard df dx)
+       (error (format msg-template 'discard))))))
 
 
-(begin-for-syntax
-  (define/contract
-    (add-function-return-variable-binding! bindings 
-                                           func-name-fake-vs 
-                                           func-name-true-vs 
-                                           func-getter)
-    (-> (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
-        var-symbol/c
-        var-symbol/c
-        getter-info/c
-        void?)
-    (hash-set! bindings 
-               func-name-fake-vs 
-               (func-arg-binding (getter-info-type func-getter) (list 'array-ref 
-                                                                      func-name-true-vs
-                                                                      0)))))
+(define/contract-for-syntax
+  (add-function-return-variable-binding! bindings 
+                                         func-name-fake-vs 
+                                         func-name-true-vs 
+                                         func-getter)
+  (-> (hash/c var-symbol/c (or/c func-arg-binding/c (symbols 'constant)))
+      var-symbol/c
+      var-symbol/c
+      getter-info/c
+      void?)
+  (hash-set! bindings 
+             func-name-fake-vs 
+             (func-arg-binding (getter-info-type func-getter) (list 'array-ref 
+                                                                    func-name-true-vs
+                                                                    0))))
 
 
 (define-syntax (func-call stx)
