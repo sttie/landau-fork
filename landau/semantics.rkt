@@ -1,4 +1,4 @@
-#lang debug racket/base
+#lang racket/base
 
 (require 
   (for-syntax racket/base
@@ -784,68 +784,69 @@
                           `(assignation ,#'new-name ,@getter-for-splice
                                         "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))))
       (((~literal der-annot) _ "'" _ "=" _)
-       (raise-syntax-error #f "Function with derivatives annotation was called from
+       (raise-syntax-error #f "Function with derivatives annotation was called from the main function. This feature is not implemented yet." template))
+
+      (((~literal der-apply) _ "=" _ "'" _)
+       (raise-syntax-error #f "Function with derivatives application was called from
                            the main function. This feature is not implemented yet." template))
 
-                                        (((~literal der-apply) _ "=" _ "'" _)
-                                         (raise-syntax-error #f "Function with derivatives application was called from
-                                                             the main function. This feature is not implemented yet." template))
+      (((~literal discard) "discard" _ "'" _)
+       (raise-syntax-error #f "Function with derivatives discard was called from
+                           the main function. This feature is not implemented yet." template))
 
-                                                 (((~literal discard) "discard" _ "'" _)
-                                                  (raise-syntax-error #f "Function with derivatives discard was called from
-                                                                      the main function. This feature is not implemented yet." template))
+      (({~literal var-decl}
+                  ((~literal type) ((~literal array-type) basic-type "[" num "]")) name:id (~seq "=" value:expr)) 
+       (datum->syntax template 
+                      `(var-decl 
+                         (type 
+                           (array-type 
+                             ,#'basic-type "[" ,#'num "]"))
+                         ;; NOTE: inlined function's local variables are prepanded with _
+                         ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name) 
+                         "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))
 
-                                                                      (({~literal var-decl}
-                                                                                  ((~literal type) ((~literal array-type) basic-type "[" num "]")) name:id (~seq "=" value:expr)) 
-                                                                       (datum->syntax template 
-                                                                                      `(var-decl 
-                                                                                         (type 
-                                                                                           (array-type 
-                                                                                             ,#'basic-type "[" ,#'num "]"))
-                                                                                         ;; NOTE: inlined function's local variables are prepanded with _
-                                                                                         ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name) 
-                                                                                         "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))
+      (({~literal var-decl} type:expr name:id)
+       (datum->syntax template `(var-decl ,#'type
+                                          ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name))))
 
-                                                                      (({~literal var-decl} type:expr name:id)
-                                                                       (datum->syntax template `(var-decl ,#'type
-                                                                                                          ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name))))
+      (({~literal var-decl} type:expr name:id "=" value:expr)
+       (datum->syntax template `(var-decl ,#'type
+                                          ,(format-id #'name INLINE-VARIABLE-FORMAT
+                                                      inlined-function-name #'name #:source #'name #:props #'name) 
+                                          "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))
 
-                                                                      (({~literal var-decl} type:expr name:id "=" value:expr)
-                                                                       (datum->syntax template `(var-decl ,#'type ,(format-id #'name INLINE-VARIABLE-FORMAT inlined-function-name #'name #:source #'name #:props #'name) 
-                                                                                                          "=" ,(bind-parameters-to-arguments inlined-function-name #'value bindings))))
+      (((~literal par) expr)
+       (datum->syntax template `(par ,(bind-parameters-to-arguments inlined-function-name #'expr bindings))))
 
-                                                                      (((~literal par) expr)
-                                                                       (datum->syntax template `(par ,(bind-parameters-to-arguments inlined-function-name #'expr bindings))))
+      (((~literal other-par) "," expr)
+       (datum->syntax template `(other-par "," ,(bind-parameters-to-arguments inlined-function-name #'expr bindings))))
 
-                                                                      (((~literal other-par) "," expr)
-                                                                       (datum->syntax template `(other-par "," ,(bind-parameters-to-arguments inlined-function-name #'expr bindings))))
+      (((~literal func-call) function-name "(" ({~literal parlist} par*:par-spec ...) ")")
+       (begin
+         (datum->syntax template 
+                        `(func-call 
+                           ,#'function-name 
+                           "(" 
+                           (parlist ,@(bind-parameters-to-arguments inlined-function-name #'(par* ...) bindings))
+                           ")"))))
 
-                                                                      (((~literal func-call) function-name "(" ({~literal parlist} par*:par-spec ...) ")")
-                                                                       (begin
-                                                                         (datum->syntax template 
-                                                                                        `(func-call 
-                                                                                           ,#'function-name 
-                                                                                           "(" 
-                                                                                           (parlist ,@(bind-parameters-to-arguments inlined-function-name #'(par* ...) bindings))
-                                                                                           ")"))))
+      (((~literal func-body) . children-pat)
+       ;; NOTE: func-body is inlined and should be in the caller namespace 
+       ;; expr-body introduce the new scope layer, so function local variables
+       ; do not conflicts with caller variables.
+       (with-syntax 
+         ((binded-stx 
+            (for/list ((child (in-list (syntax-e #'children-pat))))
+              (bind-parameters-to-arguments inlined-function-name child bindings)))) 
+         #`(expr-body #,@#'binded-stx)))
 
-                                                                      (((~literal func-body) . children-pat)
-                                                                       ;; NOTE: func-body is inlined and should be in the caller namespace 
-                                                                       ;; expr-body introduce the new scope layer, so function local variables
-                                                                       ; do not conflicts with caller variables.
-                                                                       (with-syntax 
-                                                                         ((binded-stx 
-                                                                            (for/list ((child (in-list (syntax-e #'children-pat))))
-                                                                              (bind-parameters-to-arguments inlined-function-name child bindings)))) 
-                                                                         #`(expr-body #,@#'binded-stx)))
-
-                                                                      ((parent-pat . children-pat)
-                                                                       (begin
-                                                                         (with-syntax 
-                                                                           ((binded-stx 
-                                                                              (for/list ((child (in-list (syntax-e #'children-pat))))
-                                                                                (bind-parameters-to-arguments inlined-function-name child bindings)))) 
-                                                                           #`(#,(bind-parameters-to-arguments inlined-function-name #'parent-pat bindings) #,@#'binded-stx))))
+      ((parent-pat . children-pat)
+       (begin
+         (with-syntax 
+           ((binded-stx 
+              (for/list ((child (in-list (syntax-e #'children-pat))))
+                (bind-parameters-to-arguments inlined-function-name child bindings)))) 
+           #`(#,(bind-parameters-to-arguments inlined-function-name #'parent-pat bindings) #,@#'binded-stx))))
 
                                                                       (x #'x)))
                                                   inlined-function)
