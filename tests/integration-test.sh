@@ -21,6 +21,7 @@ echo "Coping libmoons.dylib to era/lib64"
 cp ./tests/moons/dist/${BUILDPATH} ${ERAPARH}/lib64/
 
 cd ${ERAPARH}/${SATPATH}
+ERA_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 echo "Checkout to landau-test branch"
 git checkout landau-test
 
@@ -44,3 +45,6 @@ else
     vimdiff -u NONE lsm_db_old.csv lsm_db_new.csv
   fi
 fi
+
+echo "Back to initial era branch"
+git checkout ${ERA_BRANCH}
