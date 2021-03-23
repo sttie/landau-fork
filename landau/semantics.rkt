@@ -95,6 +95,15 @@
   (unless (and (not debug-compile) force-log)
     (displayln msg)))
 
+(define/contract-for-syntax
+  (get-dx-parameter-size stx parameters dx-name)
+  (-> syntax? parameters/c string? (or/c integer? false/c))
+  (define range (get-type-range
+                  (to-landau-type stx
+                                  (list 'real (hash-ref parameters (string->symbol dx-name))))))
+  (match range
+    ((list n) n)
+    ((list) #f)))
 
 (define/contract-for-syntax
   (get-der-variable-symbol name dx-name-str stx [throw-error? #t])
@@ -1477,7 +1486,8 @@
                           func-return-value
                           func-return-type
                           args
-                          self-sufficent-function?))
+                          self-sufficent-function?
+                          (new-mappings-table)))
        (define arg-names (for/list ((arg (in-list (syntax-e #'(arg*.name ...)))))
                            (syntax->datum arg)))
        (hash-set! MODULE-FUNCS-TABLE name_ (function-inline-semantics-template #'name 
@@ -1493,29 +1503,32 @@
 ;;       Mappings and dx-idx-mappings are allocated for function return value and function arguments
 ;;       if thee belong to need-derivatives-set set         
 ;;       (e.g. df-table is empty) df-table :: Hash (String-key, (idx-type (Either (Set Int) Bool))
-;; WARNING: Mutation of need-derivatives-set need-only-value-set
+;; WARNING: Mutation of need-derivatives-set need-only-value-set mappings-table 
 (define-for-syntax (make-mappings-decl-list! dx-name-str grouped-keys-table stx)
-  (let ((lst (make-mappings-decl-list-helper!
+  (let* ((ctx (syntax-parameter-value #'func-context))
+         (lst (make-mappings-decl-list-helper!
               dx-name-str
               grouped-keys-table
-              (func-context-.real-vars-table (syntax-parameter-value #'func-context))
-              (func-context-.der-table (syntax-parameter-value #'func-context))
-              (func-context-.need-only-value-set (syntax-parameter-value #'func-context))
-              (func-context-.need-derivatives-table (syntax-parameter-value #'func-context))
-              (func-context-.current-variables (syntax-parameter-value #'func-context))
+              (func-context-.real-vars-table ctx)
+              (func-context-.der-table ctx)
+              (func-context-.need-only-value-set ctx)
+              (func-context-.need-derivatives-table ctx)
+              (func-context-.current-variables ctx)
+              (func-context-.mappings-table ctx)
               (target-lang TARGET)
               stx)))
     lst))
 
 (define-for-syntax (make-der-decl-list! args stx)
-  (make-der-decl-list-helper!
-   args
-   (func-context-.dx-names-hash-set (syntax-parameter-value #'func-context))
-   (func-context-.need-derivatives-table (syntax-parameter-value #'func-context))
-   (func-context-.current-variables (syntax-parameter-value #'func-context))
-   (func-context-.current-arguments (syntax-parameter-value #'func-context))
-   (target-lang TARGET)
-   stx))
+  (let ((ctx (syntax-parameter-value #'func-context)))
+    (make-der-decl-list-helper!
+      args
+      (func-context-.dx-names-hash-set ctx)
+      (func-context-.need-derivatives-table ctx)
+      (func-context-.current-variables ctx)
+      (func-context-.current-arguments ctx)
+      (target-lang TARGET)
+      stx)))
 
 (begin-for-syntax
   (define (make-function-self-derivatives-declarations stx ctx)
@@ -1833,7 +1846,6 @@
           #'"\n"))))))
 
 
-
 (define-syntax (get-value stx)
   (syntax-parse stx
     (get-value:get-value-cls
@@ -1929,21 +1941,41 @@
                                ;; NOTE: genetated function which return derivative value
                                ; using mappings and inverse mapping to get index where derivative is stored
                                (func-name-stx (datum->syntax stx 'get_dfdx_var))
-                               ;; TODO: Use different function depending on if variable has mapping and inverse mapping. Same for all other getters usage
+
+                               (dx-range (check-result 
+                                           stx 
+                                           (format "bug2: get-der-variable-dx-range retured #f for ~a ~a"
+                                                   (var-symbol-.name name-vs) dx-name-str-in-current-al) 
+                                           (get-der-variable-dx-range name-vs dx-name-str-in-current-al stx)))
+                               (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str-in-current-al))
+                               (all-derivatives-are-used? (check-if-all-derivatives-are-used
+                                                            ctx
+                                                            (syntax->datum #'dx-parameter-size) 
+                                                            (syntax->datum #'dx-range)
+                                                            (syntax->datum #'dx-idxs-mappings)))
                                (derivative
-                                 (if (or (equal? #f (syntax->datum #'dx-idxs-mappings))
-                                         (equal? #f (syntax->datum #'inv-mapping-period)))
-                                   (datum->syntax stx '_0.0)
-                                   (with-syntax
-                                     ((args-list (list
-                                                   #'al-index
-                                                   (datum->syntax stx `(_var-ref ,#'inv-mapping-period))
-                                                   (datum->syntax stx `(_var-ref ,#'dx-idxs-mappings))
-                                                   (datum->syntax stx `(_var-ref ,#'der-var-synt)))))
-                                     (datum->syntax
-                                       stx
-                                       `(_pure-func-call ,#'func-name-stx ,#'args-list)))
-                                   )))
+                                 (match (list 'dont-have-mappings (or (equal? #f (syntax->datum #'dx-idxs-mappings))
+                                                                      (equal? #f (syntax->datum #'inv-mapping-period)))
+                                              'all-derivatives-are-used (syntax->datum #'all-derivatives-are-used?))
+                                   ((list 'dont-have-mappings #true
+                                          'all-derivatives-are-used _)
+                                    (datum->syntax stx '_0.0))
+                                   ((list 'dont-have-mappings #false
+                                          'all-derivatives-are-used #false)
+                                    (with-syntax
+                                      ((args-list (list
+                                                    #'al-index
+                                                    (datum->syntax stx `(_var-ref ,#'inv-mapping-period))
+                                                    (datum->syntax stx `(_var-ref ,#'dx-idxs-mappings))
+                                                    (datum->syntax stx `(_var-ref ,#'der-var-synt)))))
+                                      (datum->syntax
+                                        stx
+                                        `(_pure-func-call ,#'func-name-stx ,#'args-list))))
+                                   ((list 'dont-have-mappings #false
+                                          'all-derivatives-are-used #true)
+                                    (datum->syntax
+                                        stx
+                                        `(_vector-ref ,#'der-var-synt ,#'al-index))))))
 
                               (quasisyntax/loc stx
                                                (list
@@ -1975,6 +2007,8 @@
                                                                         dx-name-str-in-current-al stx)))
                            (inv-mapping-period (get-inv-mapping-period name-vs dx-name-str-in-current-al stx))
                            (name-string (symbol->string name-symb))
+
+                           (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str-in-current-al))
                            (dx-name-str-in-current-al dx-name-str-in-current-al)
                            (al-index (datum->syntax stx 'al_index_name_symbol))
                            (slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -1982,6 +2016,11 @@
                                        (datum->syntax stx `(_int+ ,#'index-start-expanded (_var-ref ,#'slice-idx)))
                                        #'get-value.index))
                            (dual-b-value (datum->syntax stx `(_vector-ref ,#'value ,#'full-idx)))
+                           (all-derivatives-are-used? (check-if-all-derivatives-are-used
+                                                        ctx
+                                                        (syntax->datum #'dx-parameter-size) 
+                                                        (syntax->datum #'dx-mapped-size)
+                                                        (syntax->datum #'dx-idxs-mappings)))
                            (dual-b-derivative
                              (cond
                                (name-is-dx
@@ -1992,6 +2031,11 @@
                                         (equal? #f (syntax->datum #'inv-mapping-period)))
                                     (datum->syntax stx
                                                    `(_if (_int= (_var-ref ,#'al-index) ,#'full-idx) _1.0 _0.0)))
+                                   ((syntax->datum #'all-derivatives-are-used?)
+                                    (datum->syntax
+                                      stx
+                                      `(_vector-ref ,#'der-vec-synt (_int+ (_int* ,#'full-idx ,#'dx-mapped-size)
+                                                                           (_var-ref ,#'al-index)))))
                                    (else
                                      (with-syntax
                                        ((func-name-stx (datum->syntax stx 'get_dfdx_cell_dx))
@@ -2007,24 +2051,30 @@
                                          `(_pure-func-call ,#'func-name-stx ,#'args-list)))
                                      )))
                                (else
-                                 (if (or (equal? #f (syntax->datum #'dx-idxs-mappings))
-                                         (equal? #f (syntax->datum #'inv-mapping-period)))
-                                   ;; NOTE: Dual-b can has no mappings for current dx, but in has for another
-                                   (datum->syntax stx '_0.0)
-                                   ;; TODO: move this binding to the assignation term, then use it here from syntax-parameter
-                                   (with-syntax
-                                     ((func-name-stx (datum->syntax stx 'get_dfdx_cell))
-                                      (args-list (list
-                                                   #'full-idx
-                                                   #'dx-mapped-size
-                                                   #'al-index
-                                                   (datum->syntax stx `(_var-ref ,#'inv-mapping-period))
-                                                   (datum->syntax stx `(_var-ref ,#'dx-idxs-mappings))
-                                                   (datum->syntax stx `(_var-ref ,#'der-vec-synt)))))
-                                     (datum->syntax
-                                       stx
-                                       `(_pure-func-call ,#'func-name-stx ,#'args-list)))
-                                   )))))
+                                 (cond
+                                   ((or (equal? #f (syntax->datum #'dx-idxs-mappings))
+                                        (equal? #f (syntax->datum #'inv-mapping-period)))
+                                    ;; NOTE: Dual-b can has no mappings for current dx, but in has for another
+                                    (datum->syntax stx '_0.0))
+                                    ;; TODO: move this binding to the assignation term, then use it here from syntax-parameter
+                                    ((syntax->datum #'all-derivatives-are-used?)
+                                      (datum->syntax
+                                         stx
+                                         `(_vector-ref ,#'der-vec-synt (_int+ (_int* ,#'full-idx ,#'dx-mapped-size)
+                                                                              (_var-ref ,#'al-index)))))
+                                    (else
+                                      (with-syntax
+                                        ((func-name-stx (datum->syntax stx 'get_dfdx_cell))
+                                         (args-list (list
+                                                      #'full-idx
+                                                      #'dx-mapped-size
+                                                      #'al-index
+                                                      (datum->syntax stx `(_var-ref ,#'inv-mapping-period))
+                                                      (datum->syntax stx `(_var-ref ,#'dx-idxs-mappings))
+                                                      (datum->syntax stx `(_var-ref ,#'der-vec-synt)))))
+                                        (datum->syntax
+                                          stx
+                                          `(_pure-func-call ,#'func-name-stx ,#'args-list)))))))))
                           (syntax/loc stx
                                       (list 
                                         dual-b-value
@@ -2124,7 +2174,6 @@
               `(_for ,#'loop-var 0 ,#'mapping-vec-len
                      (_let-int ,#'mapped-idx (_var-ref ,#'loop-var)
                                (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'loop-var))
-                                         ;; NOTE: value includes references to der-vectors and al-index-symb
                                          (_vector-set! ,#'der-vec-synt (_var-ref ,#'mapped-idx) _0.0))))))
           ;; TODO: Do not use mapping if dual-l variable has have-mapping flag equal to #f
           (raise-syntax-error #f (format "bug: no mapping found for dual-l variable ~a" (var-symbol-.name name-vs)) stx)))))
@@ -2204,52 +2253,70 @@
                          stx 
                          (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" (var-symbol-.name name-vs) dx-name-str) 
                          (get-der-variable-dx-range name-vs dx-name-str stx)))
+             (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str))
+             (all-derivatives-are-used? (check-if-all-derivatives-are-used ctx
+                                                                           (syntax->datum #'dx-parameter-size) 
+                                                                           (syntax->datum #'dx-range)
+                                                                           (syntax->datum maybe-mappings)))
              (mappings-vec-len (fx* (syntax->datum #'dx-range) df-range))
              (mappings-synt (datum->syntax stx maybe-mappings))
              (mappings-full-idx (datum->syntax stx 'mappings_full_idx_symbol))
              (mapped-idx (datum->syntax stx 'mapped_idx))
              (dx-name-str_ dx-name-str)
              (slice-idx (datum->syntax stx slice-idx-name-GLOBAL)))
-            (if (getter-is-slice? left-hand-getter-info)
-              (datum->syntax
-                stx
-                `(_for ,#'slice-idx 0 ,#'slice-range
-                       (_forever ,#'mapped-idx 0
-                                 (_let-int ,#'mappings-full-idx
-                                           (_int+
-                                             (_var-ref ,#'mapped-idx)
-                                             (_int* ,#'dx-range (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))))
-                                           (_if-stm
-                                             (_int>= (_var-ref ,#'mappings-full-idx) ,#'mappings-vec-len)
-                                             (_break)
-                                             (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'mappings-full-idx))
-                                                       (_if-stm
-                                                         (_or (_int< (_var-ref ,#'al-index-symb) 0) (_int>= (_var-ref ,#'mapped-idx) ,#'dx-range))
-                                                         (_break)
-                                                         (_vector-set! ,#'der-vec-synt
-                                                                       (_int+
-                                                                         (_int* ,#'dx-range (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)))
-                                                                         (_var-ref ,#'mapped-idx))
-                                                                       _0.0))))))))
-
-              (datum->syntax
-                stx
-                ;; NOTE: it is valid for array not to have mapping at some indexes,
-                ;;       because at some indexes derivatives are not needed. But 
-                `(_forever ,#'mapped-idx 0
-                           (_let-int ,#'mappings-full-idx (_int+ (_var-ref ,#'mapped-idx) (_int* ,#'dx-range ,index-exp))
-                                     (_if-stm (_int>= (_var-ref ,#'mappings-full-idx) ,#'mappings-vec-len)
-                                              (_break)
-                                              (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'mappings-full-idx))
-                                                        (_if-stm (_or (_int< (_var-ref ,#'al-index-symb) 0) (_int>= (_var-ref ,#'mapped-idx) ,#'dx-range))
-                                                                 (_break)
-                                                                 (_vector-set!
-                                                                   ,#'der-vec-synt
-                                                                   (_int+ (_int* ,#'dx-range ,index-exp) (_var-ref ,#'mapped-idx))
-                                                                   _0.0)))))
-                           ;; NOTE: dx-idxs-mapping al-index-symb conditions is not checked here
-                           ;; because in assgnation all indexses are exist
-                           ))))
+            (match (list "getter-is-slice?" (getter-is-slice? left-hand-getter-info)
+                       "all-derivatives-are-used?" (syntax->datum #'all-derivatives-are-used?))
+            ((list "getter-is-slice?" #true
+                   "all-derivatives-are-used?" #false)
+             (assign-derivative-to-slice stx
+                                         #'slice-idx
+                                         #'slice-range
+                                         #'mapped-idx
+                                         #'mappings-full-idx
+                                         #'al-index-symb
+                                         #'mappings-synt
+                                         #'der-vec-synt
+                                         #'dx-range
+                                         #'index-start-expanded_
+                                         #'mappings-vec-len
+                                         _0.0))
+            ((list "getter-is-slice?" #false
+                   "all-derivatives-are-used?" #false)
+             (assign-derivative-to-cell stx
+                                        #'mapped-idx
+                                        index-exp
+                                        #'mappings-full-idx
+                                        #'al-index-symb
+                                        #'mappings-synt
+                                        #'der-vec-synt
+                                        #'dx-range
+                                        #'mappings-vec-len
+                                        _0.0))
+            ((list "getter-is-slice?" #false
+                   "all-derivatives-are-used?" _)
+             (assign-derivative-to-cell-dense stx
+                                              #'mapped-idx
+                                              index-exp
+                                              #'mappings-full-idx
+                                              #'al-index-symb
+                                              #'mappings-synt
+                                              #'der-vec-synt
+                                              #'dx-range
+                                              _0.0))
+            ((list "getter-is-slice?" #true
+                   "all-derivatives-are-used?" _)
+             (assign-derivative-to-slice-dense stx
+                                               #'slice-idx
+                                               #'slice-range
+                                               #'mapped-idx
+                                               #'mappings-full-idx
+                                               #'al-index-symb
+                                               #'mappings-synt
+                                               #'der-vec-synt
+                                               #'dx-range
+                                               #'index-start-expanded_
+                                               #'mappings-vec-len
+                                               _0.0))))
           (raise-syntax-error #f (format "bug: no mapping found for dual-l variable ~a" (var-symbol-.name name-vs)) stx))))))
 
 (define/contract-for-syntax
@@ -2292,6 +2359,11 @@
                                dx-name-str) 
                        (get-der-variable-dx-range name-vs dx-name-str stx)))
            (mappings-vec-len (fx* (syntax->datum #'dx-range) df-range))
+           (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str))
+           (all-derivatives-are-used? (check-if-all-derivatives-are-used ctx
+                                                                         (syntax->datum #'dx-parameter-size) 
+                                                                         (syntax->datum #'dx-range)
+                                                                         (syntax->datum maybe-mappings)))
            (mappings-synt (datum->syntax stx maybe-mappings))
            (mappings-full-idx (datum->syntax stx 'mappings_full_idx_symbol))
            (mapped-idx (datum->syntax stx 'mapped_idx))
@@ -2308,49 +2380,196 @@
                                   ((dx-name-in-current-al '#,dx-name-str))
                                   #,assignation-rigth-part) 'expression '())))
                         ))))
-          (if (getter-is-slice? left-hand-getter-info)
-            (datum->syntax
-              stx
-              `(_for ,#'slice-idx 0 ,#'slice-range
-                     (_forever ,#'mapped-idx 0
-                               (_let-int ,#'mappings-full-idx
-                                         (_int+
-                                           (_var-ref ,#'mapped-idx)
-                                           (_int* ,#'dx-range (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))))
-                                         (_if-stm
-                                           (_int>= (_var-ref ,#'mappings-full-idx) ,#'mappings-vec-len)
-                                           (_break)
-                                           (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'mappings-full-idx))
-                                                     (_if-stm
-                                                       (_or (_int< (_var-ref ,#'al-index-symb) 0) (_int>= (_var-ref ,#'mapped-idx) ,#'dx-range))
-                                                       (_break)
-                                                       (_vector-set! ,#'der-vec-synt
-                                                                     (_int+
-                                                                       (_int* ,#'dx-range (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx)))
-                                                                       (_var-ref ,#'mapped-idx))
-                                                                     ,#'dual-b-derivative))))))))
-
-            (datum->syntax
-              stx
-              ;; NOTE: it is valid for array not to have mapping at some indexes,
-              ;;       because at some indexes derivatives are not needed. But 
-              `(_forever ,#'mapped-idx 0
-                         (_let-int ,#'mappings-full-idx (_int+ (_var-ref ,#'mapped-idx) (_int* ,#'dx-range ,index-exp))
-                                   (_if-stm (_int>= (_var-ref ,#'mappings-full-idx) ,#'mappings-vec-len)
-                                            (_break)
-                                            (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'mappings-full-idx))
-                                                      (_if-stm (_or (_int< (_var-ref ,#'al-index-symb) 0) (_int>= (_var-ref ,#'mapped-idx) ,#'dx-range))
-                                                               (_break)
-                                                               (_vector-set!
-                                                                 ,#'der-vec-synt
-                                                                 (_int+ (_int* ,#'dx-range ,index-exp) (_var-ref ,#'mapped-idx))
-                                                                 ,#'dual-b-derivative)))))
-                         ;; NOTE: dx-idxs-mapping al-index-symb conditions is not checked here
-                         ;; because in assgnation all indexses are exist
-                         ))))
+          (match (list "getter-is-slice?" (getter-is-slice? left-hand-getter-info)
+                       "all-derivatives-are-used?" (syntax->datum #'all-derivatives-are-used?))
+            ((list "getter-is-slice?" #true
+                   "all-derivatives-are-used?" #false)
+             (assign-derivative-to-slice stx
+                                         #'slice-idx
+                                         #'slice-range
+                                         #'mapped-idx
+                                         #'mappings-full-idx
+                                         #'al-index-symb
+                                         #'mappings-synt
+                                         #'der-vec-synt
+                                         #'dx-range
+                                         #'index-start-expanded_
+                                         #'mappings-vec-len
+                                         #'dual-b-derivative))
+            ((list "getter-is-slice?" #false
+                   "all-derivatives-are-used?" #false)
+             (assign-derivative-to-cell stx
+                                        #'mapped-idx
+                                        index-exp
+                                        #'mappings-full-idx
+                                        #'al-index-symb
+                                        #'mappings-synt
+                                        #'der-vec-synt
+                                        #'dx-range
+                                        #'mappings-vec-len
+                                        #'dual-b-derivative))
+            ((list "getter-is-slice?" #false
+                   "all-derivatives-are-used?" _)
+             (assign-derivative-to-cell-dense stx
+                                              #'mapped-idx
+                                              index-exp
+                                              #'mappings-full-idx
+                                              #'al-index-symb
+                                              #'mappings-synt
+                                              #'der-vec-synt
+                                              #'dx-range
+                                              #'dual-b-derivative))
+            ((list "getter-is-slice?" #true
+                   "all-derivatives-are-used?" _)
+             (assign-derivative-to-slice-dense stx
+                                               #'slice-idx
+                                               #'slice-range
+                                               #'mapped-idx
+                                               #'mappings-full-idx
+                                               #'al-index-symb
+                                               #'mappings-synt
+                                               #'der-vec-synt
+                                               #'dx-range
+                                               #'index-start-expanded_
+                                               #'mappings-vec-len
+                                               #'dual-b-derivative))))
         (raise-syntax-error #f (format "bug: no mapping found for dual-l variable ~a" 
                                        (var-symbol-.name name-vs)) stx)))))
 
+
+(define-for-syntax
+  (assign-derivative-to-slice stx 
+                   slice-idx
+                   slice-range
+                   mapped-idx
+                   mappings-full-idx
+                   al-index-symb
+                   mappings-synt
+                   der-vec-synt
+                   dx-range
+                   index-start-expanded_
+                   mappings-vec-len
+                   dual-b-derivative)
+  #| (-> any/c  any/c  any/c  any/c  any/c |#
+  #|     any/c  any/c  any/c  any/c  any/c |#
+  #|     any/c |# 
+  #|     syntax?) |#
+ (datum->syntax
+  stx
+  `(_for ,slice-idx 0 ,slice-range
+         (_forever ,mapped-idx 0
+                   (_let-int ,mappings-full-idx
+                             (_int+
+                               (_var-ref ,mapped-idx)
+                               (_int* ,dx-range (_int+ ,index-start-expanded_ (_var-ref ,slice-idx))))
+                             (_if-stm
+                               (_int>= (_var-ref ,mappings-full-idx) ,mappings-vec-len)
+                               (_break)
+                               (_let-int ,al-index-symb (_int-vector-ref ,mappings-synt
+                                                                           (_var-ref ,mappings-full-idx))
+                                         (_if-stm
+                                           (_or (_int< (_var-ref ,al-index-symb) 0)
+                                                (_int>= (_var-ref ,mapped-idx) ,dx-range))
+                                           (_break)
+                                           (_vector-set! ,der-vec-synt
+                                                         (_int+
+                                                           (_int* ,dx-range
+                                                                  (_int+ ,index-start-expanded_
+                                                                         (_var-ref ,slice-idx)))
+                                                           (_var-ref ,mapped-idx))
+                                                         ,dual-b-derivative)))))))))
+
+(define-for-syntax (assign-derivative-to-slice-dense stx
+                                                     slice-idx
+                                                     slice-range
+                                                     mapped-idx
+                                                     mappings-full-idx
+                                                     al-index-symb
+                                                     mappings-synt
+                                                     der-vec-synt
+                                                     dx-range
+                                                     index-start-expanded_
+                                                     mappings-vec-len
+                                                     dual-b-derivative)
+(datum->syntax
+  stx
+  `(_for ,slice-idx 0 ,slice-range
+         (_for ,mapped-idx 0 ,dx-range ;; TODO check if mapping block is equal to dx-range
+               (_let-int ,mappings-full-idx
+                         (_int+
+                           (_var-ref ,mapped-idx)
+                           (_int* ,dx-range (_int+ ,index-start-expanded_ (_var-ref ,slice-idx))))
+                         (_let-int ,al-index-symb (_int-vector-ref ,mappings-synt
+                                                                     (_var-ref ,mappings-full-idx))
+                                   (_vector-set! ,der-vec-synt
+                                                 (_int+
+                                                   (_int* ,dx-range
+                                                          (_int+ ,index-start-expanded_
+                                                                 (_var-ref ,slice-idx)))
+                                                   (_var-ref ,mapped-idx))
+                                                 ,dual-b-derivative)))
+               "vectorize"
+               ))))
+
+(define-for-syntax (assign-derivative-to-cell stx
+                                              mapped-idx
+                                              index-exp
+                                              mappings-full-idx
+                                              al-index-symb
+                                              mappings-synt
+                                              der-vec-synt
+                                              dx-range
+                                              mappings-vec-len
+                                              dual-b-derivative)
+  (datum->syntax
+    stx
+    ;; NOTE: it is valid for array not to have mapping at some indexes,
+    ;;       because at some indexes derivatives are not needed. But 
+    `(_forever ,mapped-idx 0
+               (_let-int ,mappings-full-idx (_int+ (_var-ref ,mapped-idx) (_int* ,dx-range ,index-exp))
+                         (_if-stm (_int>= (_var-ref ,mappings-full-idx) ,mappings-vec-len)
+                                  (_break)
+                                  (_let-int ,al-index-symb (_int-vector-ref ,mappings-synt
+                                                                              (_var-ref ,mappings-full-idx))
+                                            (_if-stm (_or (_int< (_var-ref ,al-index-symb) 0)
+                                                          (_int>= (_var-ref ,mapped-idx) ,dx-range))
+                                                     (_break)
+                                                     (_vector-set!
+                                                       ,der-vec-synt
+                                                       (_int+ (_int* ,dx-range ,index-exp)
+                                                              (_var-ref ,mapped-idx))
+                                                       ,dual-b-derivative)))))
+               ;; NOTE: dx-idxs-mapping al-index-symb conditions is not checked here
+               ;; because in assgnation all indexses are exist
+               )))
+
+
+(define-for-syntax (assign-derivative-to-cell-dense stx
+                                                    mapped-idx
+                                                    index-exp
+                                                    mappings-full-idx
+                                                    al-index-symb
+                                                    mappings-synt
+                                                    der-vec-synt
+                                                    dx-range
+                                                    dual-b-derivative)
+  (datum->syntax
+    stx
+    ;; NOTE: it is valid for array not to have mapping at some indexes,
+    ;;       because at some indexes derivatives are not needed. But 
+    `(_for ,mapped-idx 0 ,dx-range ;; TODO check if mapping block is equal to dx-range
+           (_let-int ,mappings-full-idx (_int+ (_var-ref ,mapped-idx) (_int* ,dx-range ,index-exp))
+                     (_let-int ,al-index-symb (_int-vector-ref ,mappings-synt
+                                                                 (_var-ref ,mappings-full-idx))
+                               (_vector-set!
+                                 ,der-vec-synt
+                                 (_int+ (_int* ,dx-range ,index-exp)
+                                        (_var-ref ,mapped-idx))
+                                 ,dual-b-derivative)))
+           "vectorize"
+           ;; NOTE: dx-idxs-mapping al-index-symb conditions is not checked here
+           ;; because in assgnation all indexses are exist
+           )))
 
 (define/contract-for-syntax
   (search-left-hand-side-name stx ctx name)
@@ -3475,3 +3694,4 @@
            (else (is-type_ 'message #'"derivative_not_set"))))
 (_ (is-type_ 'message #'"has_no_derivatives"))
 )))))
+

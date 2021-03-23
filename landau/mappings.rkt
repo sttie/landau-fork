@@ -5,6 +5,7 @@
   (only-in "combinators.rkt" c-define-array)
   (for-syntax racket/syntax
               racket/base
+              racket/vector
               racket/match
               racket/set
               racket/contract
@@ -220,12 +221,20 @@
                 'dx-mappings)
               dx-idx-mappings)))))))
 
+(define-for-syntax (fxvector-member val vec )
+  (for/or ((vec-val (in-fxvector vec)))
+    (equal? val vec-val)))
+
+(define-for-syntax (include-minus-one? vec)
+  (match (fxvector-member -1 vec)
+    (#f #f)
+    (_ #t)))
 
 ;; NOTE: Traverse the keys of all needed variables names and allocate mappings vectors if variable need derivatives
 ;;       Mappings and dx-idx-mappings are allocated for function return value and function arguments
 ;;       if thee belong to need-derivatives-set set         
 ;;       (e.g. df-table is empty) df-table :: Hash (String-key, (idx-type (Either (Set Int) Bool))
-;; WARNING: Mutation of need-derivatives-set need-only-value-set
+;; WARNING: Mutation of need-derivatives-set need-only-value-set mappings-table
 (define/contract-for-syntax
   (make-mappings-decl-list-helper!
     dx-name-str
@@ -235,6 +244,7 @@
     need-only-value-set
     need-derivatives-table
     current-variables
+    mappings-table
     lang
     stx)
   (-> string?
@@ -244,6 +254,7 @@
       need-only-value-set/c
       need-derivatives-table/c
       current-variables/c
+      mappings-table/c
       lang/c
       (syntax/c any/c)
 
@@ -285,6 +296,11 @@
                                                             dx-name-str 
                                                             n-mappings
                                                             grouped-keys-table)))))
+               (when mapping-var-symbol
+                (set-mappings! mappings-table dx-idx-mappings-var-symbol (if df-mappings-vec
+                                                                          (mappings-info (include-minus-one? df-mappings-vec))
+                                                                          #f)))
+               
                (match lang
                  ;; NOTE: Racket lang
                  ('racket
@@ -327,9 +343,9 @@
                                   (dx-idx-mappings-var-symbol (symbol->string dx-idx-mappings-var-symbol)))
                       (quasisyntax/loc stx
                                        (list
-                                         (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "static")
+                                         (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "const static")
                                          ;(log-debug (format "~a mappings: ~a" #,var-name-key #,#'df-mappings-vec))
-                                         (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "static"))))
+                                         (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "const static"))))
                     ;(log-debug (format "~a inv-mappings: ~a" #,var-name-key #,#'dx-idx-mappings-vec))
 
                     #'""))))))))

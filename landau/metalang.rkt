@@ -129,7 +129,8 @@
                                   (quasisyntax/loc
                                     stx
                                     (c-declare-var #,(syntax->string #'name) #,#'type-expd #,(if (attribute const?)
-                                                                                               (quote 'static) (quote 'on-stack))
+                                                                                               (quote 'static)
+                                                                                               (quote 'on-stack))
                                                    (to-string value) #,#'const?_))))))
 ))
 
@@ -199,14 +200,17 @@
 
 (define-syntax (_for stx)
   (syntax-parse stx
-    ((_for var-name:id start end body)
+    ((_for var-name:id start end body (~optional pragma))
          (match (target-lang TARGET)
            ('racket
             (syntax/loc stx
                         (loop start end (lambda (var-name) body))))
            ('ansi-c
-            (quasisyntax/loc stx
-                        (c-for #,(syntax->string #'var-name) start end (thunk body))))))))
+            (if (attribute pragma)
+              (quasisyntax/loc stx
+                               (c-for #,(syntax->string #'var-name) start end (thunk body) pragma))
+              (quasisyntax/loc stx
+                               (c-for #,(syntax->string #'var-name) start end (thunk body)))))))))
 
 (define-syntax (_forever stx)
   (syntax-parse stx

@@ -8,6 +8,7 @@
   racket/contract/region
   racket/extflonum
   racket/flonum
+  racket/fixnum
   racket/function
   racket/list
   racket/match
@@ -20,6 +21,7 @@
 
 (define constants (make-hash))
 (define parameters (make-hash))
+(define parameters/c (hash/c symbol? list?))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -153,95 +155,92 @@
 (define dx-name/c string?)
 (define df-der-table/c (hash/c dx-name/c (list/c (symbols 'dx-idxs) mutable-set/c)))
 
-(begin
- (define der-table/c
-   (hash/c
+
+(define der-table/c
+  (hash/c
     df-name/c
     df-der-table/c))
- (define/contract (dtbl-new)
-   (-> der-table/c)
-   (make-hash))
- 
- (define/contract (dtbl-get-df-table dtbl df-name)
-   (-> der-table/c df-name/c
-       df-der-table/c)
-   (hash-ref dtbl df-name (thunk (error (format "bug: der-table has no ~a key" df-name))))))
+(define/contract (dtbl-new)
+                 (-> der-table/c)
+                 (make-hash))
+
+(define/contract (dtbl-get-df-table dtbl df-name)
+                 (-> der-table/c df-name/c
+                     df-der-table/c)
+                 (hash-ref dtbl df-name (thunk (error (format "bug: der-table has no ~a key" df-name)))))
 
 
-(begin
- (define real-vars-table/c (hash/c var-symbol/c (or/c integer? false/c)))
- (define/contract (rvt-new)
-   (-> real-vars-table/c)
-   (make-hash))
+(define real-vars-table/c (hash/c var-symbol/c (or/c integer? false/c)))
+(define/contract (rvt-new)
+                 (-> real-vars-table/c)
+                 (make-hash))
 
- (define/contract (rvt-get-var-size rvt var)
-   (-> real-vars-table/c var-symbol/c 
-       (or/c integer? false/c))
-   (hash-ref rvt var (thunk (error (format "bug: real-vars-table has no key ~a\n~a" var (hash->string rvt))))))
- 
- (define/contract (rvt-var-is-array rvt var)
-   (-> real-vars-table/c var-symbol/c
-       boolean?)
-   (integer? (rvt-get-var-size rvt var))))
+(define/contract (rvt-get-var-size rvt var)
+                 (-> real-vars-table/c var-symbol/c 
+                     (or/c integer? false/c))
+                 (hash-ref rvt var (thunk (error (format "bug: real-vars-table has no key ~a\n~a" var (hash->string rvt))))))
+
+(define/contract (rvt-var-is-array rvt var)
+                 (-> real-vars-table/c var-symbol/c
+                     boolean?)
+                 (integer? (rvt-get-var-size rvt var)))
 
 
 (define dx-names-set/c (hash/c string? boolean?))
 (define grouped-keys-table/c (hash/c var-symbol/c (listof integer?)))
 
 
-(begin
- (define dx-mapping-sizes-ht/c (hash/c string? mapping-sizes/c))
- (define/contract (dms-member? dms dx-name)
-   (-> dx-mapping-sizes-ht/c string?
-       boolean?)
-   (hash-has-key? dms dx-name))
- 
- (define/contract (dms-get-mapping-sizes dms dx-name)
-   (-> dx-mapping-sizes-ht/c string?
-       mapping-sizes/c)
-   (hash-ref dms dx-name (thunk (error (format "bug: dx-mapping-sizes-ht has no ~a key" dx-name))))))
+(define dx-mapping-sizes-ht/c (hash/c string? mapping-sizes/c))
+(define/contract (dms-member? dms dx-name)
+                 (-> dx-mapping-sizes-ht/c string?
+                     boolean?)
+                 (hash-has-key? dms dx-name))
+
+(define/contract (dms-get-mapping-sizes dms dx-name)
+                 (-> dx-mapping-sizes-ht/c string?
+                     mapping-sizes/c)
+                 (hash-ref dms dx-name (thunk (error (format "bug: dx-mapping-sizes-ht has no ~a key" dx-name)))))
 
 
-(begin
- (define need-derivatives-table/c (hash/c var-symbol/c dx-mapping-sizes-ht/c))
- (define/contract (ndt-new)
-   (-> need-derivatives-table/c)
-   (make-hash))
+(define need-derivatives-table/c (hash/c var-symbol/c dx-mapping-sizes-ht/c))
+(define/contract (ndt-new)
+                 (-> need-derivatives-table/c)
+                 (make-hash))
 
- (define/contract (ndt-member? ndt df-name)
-   (-> need-derivatives-table/c var-symbol/c
-       boolean?)
-   (hash-has-key? ndt df-name))
+(define/contract (ndt-member? ndt df-name)
+                 (-> need-derivatives-table/c var-symbol/c
+                     boolean?)
+                 (hash-has-key? ndt df-name))
 
- (define/contract (ndt-set! ndt df-name value-ht)
-   (-> need-derivatives-table/c var-symbol/c dx-mapping-sizes-ht/c
-       boolean?)
-   (hash-set! ndt df-name value-ht))
+(define/contract (ndt-set! ndt df-name value-ht)
+                 (-> need-derivatives-table/c var-symbol/c dx-mapping-sizes-ht/c
+                     boolean?)
+                 (hash-set! ndt df-name value-ht))
 
- (define/contract (ndt-get-dx-mapping-sizes-ht ndt df-name)
-   (-> need-derivatives-table/c var-symbol/c 
-       dx-mapping-sizes-ht/c)
-   (hash-ref! ndt df-name (thunk (error (format "bug: ndt-get-dx-mapping-sizes-ht has no key ~a" df-name)))))
+(define/contract (ndt-get-dx-mapping-sizes-ht ndt df-name)
+                 (-> need-derivatives-table/c var-symbol/c 
+                     dx-mapping-sizes-ht/c)
+                 (hash-ref! ndt df-name (thunk (error (format "bug: ndt-get-dx-mapping-sizes-ht has no key ~a" df-name)))))
 
- (define/contract (ndt-get-dx-names ndt df-name)
-   (-> need-derivatives-table/c var-symbol/c
-       (listof string?))
-   (define df-table (ndt-get-dx-mapping-sizes-ht ndt df-name))
-   (hash-keys df-table))
+(define/contract (ndt-get-dx-names ndt df-name)
+                 (-> need-derivatives-table/c var-symbol/c
+                     (listof string?))
+                 (define df-table (ndt-get-dx-mapping-sizes-ht ndt df-name))
+                 (hash-keys df-table))
 
- (define/contract (ndt-get-mapping-sizes ndt df-name dx-name)
-   (-> need-derivatives-table/c var-symbol/c string?
-       (or/c mapping-sizes/c false/c))
-   (unless (var-symbol/c df-name)
-     (error "181"))
-   (cond
-     [(ndt-member? ndt df-name)
-      (let ((dx-name->dx-sizes (ndt-get-dx-mapping-sizes-ht ndt df-name)))
-         (cond
-           ((dms-member? dx-name->dx-sizes dx-name)
-            (dms-get-mapping-sizes dx-name->dx-sizes dx-name))
-           (else #f)))]
-     [else #f])))
+(define/contract (ndt-get-mapping-sizes ndt df-name dx-name)
+                 (-> need-derivatives-table/c var-symbol/c string?
+                     (or/c mapping-sizes/c false/c))
+                 (unless (var-symbol/c df-name)
+                   (error "181"))
+                 (cond
+                   [(ndt-member? ndt df-name)
+                    (let ((dx-name->dx-sizes (ndt-get-dx-mapping-sizes-ht ndt df-name)))
+                      (cond
+                        ((dms-member? dx-name->dx-sizes dx-name)
+                         (dms-get-mapping-sizes dx-name->dx-sizes dx-name))
+                        (else #f)))]
+                   [else #f]))
 
 
 (define base-type/c (one-of/c 'real 'int 'dual-l 'dual-r 'int-index))
@@ -277,6 +276,30 @@
 (define backrun-ref/c (list/c (or/c 'array-ref 'func-ref) var-symbol/c integer?))
 (define functions-symbols/c (hash/c string? symbol?))
 
+(struct mappings-info (.have-minus-ones?) #:prefab)
+(define mappings-info/c (struct/c mappings-info boolean?))
+(define mappings-table/c (hash/c symbol? (or/c mappings-info/c #f)))
+(define/contract (new-mappings-table) (-> mappings-table/c) (make-hash))
+(define/contract (get-mappings mappings-table var)
+                 (-> mappings-table/c symbol? (or/c mappings-info/c #f))
+  (if (hash-has-key? mappings-table var)
+    (hash-ref mappings-table var)
+    #f))
+(define/contract (set-mappings! mappings-table var mappings-info)
+                 (-> mappings-table/c symbol? mappings-info/c void?)
+  (hash-set! mappings-table var mappings-info))
+(define mappings-table-copy hash-copy)
+(define (check-if-all-derivatives-are-used ctx dx-size dx-mapping-size mappings-symbol)
+  (let* ((maybe-mappings-info
+           (get-mappings (func-context-.mappings-table ctx)
+                         mappings-symbol))
+         (have-no-minus-ones (if maybe-mappings-info
+                                (not (mappings-info-.have-minus-ones? maybe-mappings-info))
+                                #f)))
+    (and have-no-minus-ones (equal? dx-size dx-mapping-size))
+    ))
+
+
 (struct func-context
         (.current-variables
          .function-name
@@ -288,7 +311,8 @@
          .function-return-value
          (.function-return-type #:mutable)
          .current-arguments
-         .self-sufficent-function?)
+         .self-sufficent-function?
+         .mappings-table)
         #:prefab)
 
 (define func-context/c
@@ -303,7 +327,8 @@
             symbol?
             type/c
             current-arguments/c
-            boolean?))
+            boolean?
+            mappings-table/c))
 
 (define/contract 
   (func-context-copy ctx)
@@ -319,7 +344,8 @@
     (deepcopy (func-context-.function-return-value ctx))
     (deepcopy (func-context-.function-return-type ctx))
     (deepcopy (func-context-.current-arguments ctx))
-    (deepcopy (func-context-.self-sufficent-function? ctx))))
+    (deepcopy (func-context-.self-sufficent-function? ctx))
+    (mappings-table-copy (func-context-.mappings-table ctx))))
 
 (struct func-info
     (func-return-symbol
@@ -715,7 +741,8 @@
                (func-context-.function-return-value ctx)
                (func-context-.function-return-type ctx)
                (func-context-.current-arguments ctx)
-               (func-context-.self-sufficent-function? ctx)))
+               (func-context-.self-sufficent-function? ctx)
+               (func-context-.mappings-table ctx)))
 
 (define INLINE-VARIABLE-FORMAT "_inl_~a_~a")
 
