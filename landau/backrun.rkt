@@ -92,11 +92,12 @@
         ;; They should be defined in the local namespace.
         (eval '(require (rename-in racket/private/list (reverse alt-reverse))) ns)
         (eval '(require racket/unsafe/ops) ns)
+        (eval '(require racket/fixnum) ns)
         (eval '(define (check-range a b step)
                  (unless (real? a) (raise-argument-error 'in-range "real?" a))
                  (unless (real? b) (raise-argument-error 'in-range "real?" b))
                  (unless (real? step) (raise-argument-error 'in-range "real?" step))) ns)
-        (eval expanded-syntax ns))
+        (eval (syntax->datum expanded-syntax) ns))
 
 
 (define/contract-for-syntax
