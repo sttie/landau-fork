@@ -9,7 +9,7 @@ SATPATH=nepsat
 set -e
 
 echo "Compling .dau to .c"
-time racket ${SATNAME}.dau
+time racket ${SATNAME}.dau -c -extfl
 mv ${SATNAME}.c ./moons/src/
 cd moons
 
@@ -35,9 +35,9 @@ racket db_to_csv.slon > lsm_db_new.csv
 echo "Comparing lsm_db_new.csv with lsm_db_old.csv"
 if [[ $(diff lsm_db_old.csv lsm_db_new.csv) == "" ]]
 then
-  echo "Integration test -- PASSED"
+  echo "Integration test C -- PASSED"
 else
-  echo "Integration test -- FAILED"
+  echo "Integration test C -- FAILED"
   printf "To open vimdiff press y:"
   read -r
   if [[ $REPLY == "y" ]]
