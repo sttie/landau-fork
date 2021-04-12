@@ -5,15 +5,12 @@
                      racket/flonum
                      racket/fixnum
                      racket/extflonum
+                     "constant-propagation.rkt"
                      "target-config.rkt"
                      "environment.rkt"))
 
 (provide (for-syntax (all-defined-out)))
 
-(begin-for-syntax
- (define __0.0 (if (target-extfloat? TARGET) 0.0t0 0.0))
- (define __make-vector
-  (if (target-extfloat? TARGET) make-extflvector make-flvector)))
 
 (define-for-syntax (instantiate type-stx)
     (let* ((type (syntax->datum type-stx))
@@ -22,12 +19,12 @@
            (list 'dual-r (list size))
            (list 'dual-l (list size)))
        (with-syntax ((size-stx (datum->syntax type-stx size)))
-          #`(#,__make-vector #,#'size-stx)))
+          #`(#,make-rl-vector #,#'size-stx)))
       ((list 'int (list size))
        (with-syntax ((size-stx (datum->syntax type-stx size)))
-          #`(#,__make-vector #,#'size)))
+          #`(#,make-rl-vector #,#'size)))
       ((list 'real '())
-       #`#,__0.0)
+       #`#,rl0.0)
       ((list 'int '())
        #'0))))
      res))

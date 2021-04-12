@@ -290,14 +290,16 @@
   (hash-set! mappings-table var mappings-info))
 (define mappings-table-copy hash-copy)
 (define (check-if-all-derivatives-are-used ctx dx-size dx-mapping-size mappings-symbol)
-  (let* ((maybe-mappings-info
+  (match mappings-symbol
+    (#f #f)
+    (_ (let* ((maybe-mappings-info
            (get-mappings (func-context-.mappings-table ctx)
                          mappings-symbol))
          (have-no-minus-ones (if maybe-mappings-info
                                 (not (mappings-info-.have-minus-ones? maybe-mappings-info))
                                 #f)))
     (and have-no-minus-ones (equal? dx-size dx-mapping-size))
-    ))
+    ))))
 
 
 (struct func-context
@@ -574,12 +576,6 @@
   (if size
     (list base-type (list size))
     (list base-type (list))))
-
-
-(define (any-number? n)
-  (if (target-extfloat? TARGET)
-    (or (extflonum? n) (number? n))
-    (number? n)))
 
 (define/contract
   BUILT-IN-FUNCTIONS

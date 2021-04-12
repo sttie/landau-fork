@@ -629,3 +629,4 @@
            (quasisyntax/loc
             stx
             (c-func-decl #,#'c-func-pragma #,(syntax->string #'func-name) "" #,c-args (thunk (c-return #,#'body)))))))))))
+

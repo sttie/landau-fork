@@ -1,7 +1,7 @@
 #lang racket
 #| INFO: Routines for generating direct and inverse mappings |#
 (require 
-  (only-in "common-for-syntax.rkt" vec->fxvec vector->carray fxvector->vector define/contract-for-syntax)
+  (only-in "common-for-syntax.rkt" vec->fxvec fxvector->vector define/contract-for-syntax)
   (only-in "combinators.rkt" c-define-array)
   (for-syntax racket/syntax
               racket/base
@@ -13,7 +13,7 @@
               "target-config.rkt"
               "combinators.rkt"
               "metalang.rkt"
-              (only-in "common-for-syntax.rkt" fxvec->vec vector->carray)
+              (only-in "common-for-syntax.rkt" fxvec->vec)
               racket/stxparam
               racket/list
               racket/flonum
@@ -301,26 +301,17 @@
                                                                           (mappings-info (include-minus-one? df-mappings-vec))
                                                                           #f)))
                
+               (define mapping-is-needed? (and mapping-var-symbol dx-idx-mappings-var-symbol))
                (match lang
                  ;; NOTE: Racket lang
                  ('racket
-                  (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
+                  (if mapping-is-needed?
                     (begin
                       (with-syntax* 
                         ((dx-idx-mappings-vec-syntax dx-idx-mappings-vec)
                          (mapping-var-symbol (datum->syntax stx mapping-var-symbol))
                          (dx-idx-mappings-var-symbol (datum->syntax stx dx-idx-mappings-var-symbol))
-                         (dx-name-str dx-name-str)
-                         (debug-msg
-                           (if debug
-                             (quasisyntax/loc
-                               stx
-                               (displayln
-                                 (string-append
-                                   (format "~a ' ~a mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'df-mappings-vec)
-                                   (format "~a ' ~a inv-mappings: ~a\n" #,var-name-key #,#'dx-name-str #,#'dx-idx-mappings-vec))))
-
-                             #'(void))))
+                         (dx-name-str dx-name-str))
                         (with-syntax
                           ((df-mappings-vec (fxvec->vec df-mappings-vec))
                            (dx-idx-mappings-vec (fxvec->vec dx-idx-mappings-vec)))
@@ -328,13 +319,14 @@
                             stx
                             (begin (define mapping-var-symbol (vec->fxvec df-mappings-vec))
                                    (define dx-idx-mappings-var-symbol (vec->fxvec dx-idx-mappings-vec))
-                                   debug-msg)))))
+                                   )))))
 
                     #'(void)))
 
+                 ;; TODO USE metalang
                  ;; NOTE: ANSI-C lang
                  ('ansi-c
-                  (if (and mapping-var-symbol dx-idx-mappings-var-symbol)
+                  (if mapping-is-needed? 
                     (with-syntax ((df-mappings-vec (vector->carray (fxvector->vector df-mappings-vec)))
                                   (df-mappings-vec-size (fxvector-length df-mappings-vec))
                                   (dx-idx-mappings-vec (vector->carray (fxvector->vector dx-idx-mappings-vec)))
@@ -343,10 +335,12 @@
                                   (dx-idx-mappings-var-symbol (symbol->string dx-idx-mappings-var-symbol)))
                       (quasisyntax/loc stx
                                        (list
-                                         (c-define-array "int" mapping-var-symbol df-mappings-vec-size #,#'df-mappings-vec "const static")
-                                         ;(log-debug (format "~a mappings: ~a" #,var-name-key #,#'df-mappings-vec))
-                                         (c-define-array "int" dx-idx-mappings-var-symbol dx-idx-mappings-vec-size #,#'dx-idx-mappings-vec "const static"))))
-                    ;(log-debug (format "~a inv-mappings: ~a" #,var-name-key #,#'dx-idx-mappings-vec))
+                                         (c-define-array "int" mapping-var-symbol
+                                                         df-mappings-vec-size 
+                                                         #,#'df-mappings-vec "const static")
+                                         (c-define-array "int" dx-idx-mappings-var-symbol
+                                                         dx-idx-mappings-vec-size 
+                                                         #,#'dx-idx-mappings-vec "const static"))))
 
                     #'""))))))))
 

@@ -1,5 +1,6 @@
-#lang racket (require 
- (for-syntax (for-syntax racket/base racket/syntax syntax/parse))
+#lang racket/base
+(require 
+ ;(for-syntax (for-syntax racket/base racket/syntax syntax/parse))
  (for-syntax racket/base
              racket/contract
              racket/extflonum
@@ -15,9 +16,11 @@
              racket/pretty
              racket/vector
              syntax/parse
+             "constant-propagation.rkt" 
              "environment.rkt"
              "target-config.rkt"
              "metalang.rkt")
+         "constant-propagation.rkt" 
          "environment.rkt"
          "combinators.rkt"
          "metalang.rkt"
@@ -27,8 +30,8 @@
          racket/extflonum
          racket/fixnum)
 
-;(provide check-duplicate-variable-name check-duplicate-argument-name)
 (provide (all-defined-out))
+(provide (for-syntax (all-from-out "constant-propagation.rkt")))
 (provide (for-syntax (except-out (all-defined-out) binary-op-cast)))
 
 (define-syntax-rule (define/contract-for-syntax definition type body ...)
@@ -49,80 +52,6 @@
   (for/list ((lr (in-list l1)) (ll (in-list l2)))
     (proc lr ll)))
 
-(define-for-syntax rl*
-  (if (target-extfloat? TARGET)
-    extfl*
-    fl*))
-
-(define-for-syntax rl/
-  (if (target-extfloat? TARGET)
-    extfl/
-    fl/))
-
-(define-for-syntax rl+
-  (if (target-extfloat? TARGET)
-    extfl+
-    fl+))
-
-(define-for-syntax rl-
-  (if (target-extfloat? TARGET)
-    extfl-
-    fl-))
-
-(define-for-syntax (rl-neg n)
-  (if (target-extfloat? TARGET)
-    (extfl- 0.0t0 n)
-    (fl- n)))
-
-(define-for-syntax rl-sin
-  (if (target-extfloat? TARGET)
-    extflsin
-    flsin))
-
-(define-for-syntax rl-cos
-  (if (target-extfloat? TARGET)
-    extflcos
-    flcos))
-
-(define-for-syntax ->rl
-  (if (target-extfloat? TARGET)
-    ->extfl
-    ->fl))
-
-(define-for-syntax (rl-sqr x)
-  (if (target-extfloat? TARGET)
-    (lambda (x) (extfl* x x))
-    (lambda (x) (fl* x x))))
-
-(define-for-syntax rl-sqrt
-  (if (target-extfloat? TARGET)
-    extflsqrt
-    flsqrt))
-
-(define-for-syntax rl-expt
-  (if (target-extfloat? TARGET)
-    extflexpt
-    flexpt))
-
-(define-for-syntax rl-vector-ref
-  (if (target-extfloat? TARGET)
-    extflvector-ref
-    flvector-ref))
-
-(define-for-syntax (list->rl-vector value-list)
-  (if (target-extfloat? TARGET)
-    (for/extflvector ((x (in-list value-list)))
-                     (begin
-                      (atom-number x)))
-    (for/flvector ((x (in-list value-list)))
-                  (begin
-                   (atom-number x)))))
-
-(define-for-syntax (normilize-rl rl)
-  (if (and (equal? 'racket (target-lang TARGET)) 
-           (target-extfloat? TARGET))
-    #'(format "~a" rl)
-    #'rl))
 
 (define-for-syntax (with-syntax-property property-name property-value stx)
   (syntax-property stx property-name property-value #t))
@@ -153,11 +82,6 @@
 
 (define-for-syntax (get-array-type type)
   (car type))
-
-(define-for-syntax (vector->carray vec)
-  (format "{ ~a }"
-          (string-join
-           (vector->list (vector-map! number->string vec)) ", ")))
 
 (define-for-syntax (fxvector->vector fxvec)
   (for/vector
@@ -401,7 +325,7 @@
                            current-arguments
                            arg-name
                            (make-dual-type df-type 'dual-l))
-                         (match lang ;;FIXME: refactor
+                         (match lang 
                            ('racket
                             (with-syntax ((der-vec (datum->syntax stx dual-r-var)))
                               (quasisyntax/loc stx
@@ -411,10 +335,8 @@
                                            (df-size (local-expand (datum->syntax stx df-size) 'expression '()))
                                            (arr-size (fx* (atom-number #'df-size) dx-mapped-size)))
                                           (quasisyntax/loc stx  
-                                                           (c-define-array #,(if (target-extfloat? TARGET)
-                                                                               "long double" ;; REFACTOR
-                                                                               "double") 
-                                                                           der-vec arr-size "{ 0.0 }"))))))))))
+                                                           (c-define-array c-real-type
+                                                                           der-vec arr-size c-zero-filled-array))))))))))
                 (if (equal? lang 'racket)
                   (cons 'begin (syntax-e #'der-vec-decl-list-forall-dx))
                   (with-syntax ((der-vec-decl-list-forall-dx_ (cons 'list (syntax-e #'der-vec-decl-list-forall-dx))))
@@ -436,7 +358,6 @@
 
 ;; NOTE: it is used close to the declaration where types are just parsed,
 ;; except the func-value case, where it's type changed from real to dual-l and then der-vector is allocated
-;;FIXME: refactor
 (define-for-syntax (instantiate-dual-var df-type dx-mapped-size stx)
   (let ((msg "bug: instantiate-dual-var: df-type can be only 'real array"))
     (cond
@@ -446,14 +367,13 @@
           (if (or (equal? type 'real) (equal? type 'dual-l))
               (with-syntax ((expanded-df-size (cadr (syntax->datum (local-expand (datum->syntax stx df-size) 'expression '())))))
                 (quasisyntax/loc stx 
-                  ;; REFACTOR
-                  (#,(if (target-extfloat? TARGET) make-extflvector make-flvector) (fx* #,#'expanded-df-size #,dx-mapped-size))))
+                  (#,make-rl-vector (fx* #,#'expanded-df-size #,dx-mapped-size))))
               (error msg)))
          ((list (list type (list)) dx-mapped-size)
           (if (or (equal? type 'real) (equal? type 'dual-l))
               (quasisyntax/loc stx
-                (begin ;; REFACTOR
-                  (#,(if (target-extfloat? TARGET) make-extflvector make-flvector) #,dx-mapped-size)))
+                (begin
+                  (#,make-rl-vector #,dx-mapped-size)))
               (error msg)))
          (else "bug: instantiate-dual-var: match type failed")))
          

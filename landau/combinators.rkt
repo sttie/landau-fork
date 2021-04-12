@@ -1,9 +1,11 @@
-#lang racket
+#lang racket/base
 
 (require racket/match
          racket/fixnum
          racket/extflonum
+         racket/vector
          racket/contract
+         racket/string
          "environment.rkt"
          "target-config.rkt")
 
@@ -68,6 +70,7 @@
 (define (c-if-expr pred true-body false-body)
   (format "(~a ? ~a : ~a)" pred true-body false-body))
 
+;; NOTE: for experiment with branchless code.
 #| (define (c-if-expr pred true-body false-body) |#
 #|   (c-or (c-and pred true-body) (c-and (c-not pred) false-body))) |#
 
@@ -149,6 +152,11 @@
 (define (c-make-array values-list)
   (format "{ ~a }" (string-join (map to-string values-list) ", ")))
 
+(define (vector->carray vec)
+  (format "{ ~a }"
+          (string-join
+           (vector->list (vector-map! number->string vec)) ", ")))
+
 (define (c-set-array symb idx value)
   (let ((indentation (offset-string (offset))))
     (format "~a~a[~a] = ~a;\n" indentation symb idx value)))
@@ -159,6 +167,13 @@
 
 (define (c-dereference pointer-symb)
   (format "*~a" pointer-symb))
+
+(define c-real-type 
+  (if (target-extfloat? TARGET)
+    "long double"
+    "double"))
+
+(define c-zero-filled-array "{ 0.0 }")
 
 (define (c-exact->inexact value)
   (if (target-extfloat? TARGET)
