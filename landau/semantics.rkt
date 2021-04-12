@@ -50,7 +50,7 @@
          _int+ _int- _int* _int/ _int-neg _int= _int> _int>= _int<= _int<
          _rl+ _rl- _rl* _rl/ _rl-neg
          _exact->inexact
-         _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call _func-decl
+         _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call 
          _sin _cos _expt _sqr _sqrt
          _0.0 _1.0 _2.0 _0.5
          _break _nothing _empty-statement _local
@@ -100,7 +100,9 @@
   (-> syntax? parameters/c string? (or/c integer? false/c))
   (define range (get-type-range
                   (to-landau-type stx
-                                  (list 'real (hash-ref parameters (string->symbol dx-name))))))
+                                  ;; FIXME dx-name can be not a parameter but an ordinary variable
+                                  ;; need to lookup dx set, which is constructed in backrun.rkt/process-actions-list.rkt
+                                  (list 'real (hash-ref parameters (string->symbol dx-name) 1)))))
   (match range
     ((list n) n)
     ((list) #f)))
@@ -1238,15 +1240,12 @@
      (let* ((number-datum (syntax->datum #'number-stx))
             (num-type (if (exact? number-datum)
                         'int
-                        'real))
-            (lang-racket? (equal? 'racket (target-lang TARGET)))
-            (num-type-is-real? (equal? num-type 'real))
-            (use-extflonums? (target-extfloat? TARGET)))
+                        'real)))
     (with-syntax
        ((finalized-num
-         (if (and use-extflonums? num-type-is-real?)
-           (datum->syntax stx (real->extfl number-datum))
-           #'number-stx)))
+          (match num-type
+            ('int #'number-stx)
+            ('real (datum->syntax stx (inexact->rl number-datum))))))
     (syntax-property
       #'finalized-num
       'landau-type
@@ -1267,20 +1266,6 @@
     (pattern
      ({~literal other-argument} "," type:type-spec name:id)))
 )
-
-;; TODO: Should be moved to combinators.rkt
-; (define-for-syntax (to-c-func-param landau-parsed-type name-str target)
-;   (let ((target-real (if (target-extfloat? target) "long double" "double")))
-;     (match landau-parsed-type
-;     [(list 'real '()) #`(format "~a ~a" #,target-real #,name-str)]
-;     [(list 'int '()) #`(format "int ~a" #,name-str)]
-;     [(list 'real (list size)) #`(format "~a *restrict ~a" #,target-real #,name-str)]
-;     [(list 'int (list size)) #`(format "~a *restrict ~a" "int" #,name-str)]
-;     ;[(list 'dual-l '()) (list dual-type '())]
-    
-;     [else (error (format "bug: unsupported type: ~a" landau-parsed-type))])))
-
-
 
 
 (begin-for-syntax
@@ -1308,7 +1293,6 @@
            (args (func-context-.current-arguments ctx))
            (self-sufficient? (func-context-.self-sufficent-function? ctx)))
       (match (target-lang TARGET)
-        ;; FIXME: implement dual functions decl as in ansi-c backend
         ('racket 
          (let* ((add-arg!
                  (lambda (argname argtype args)
@@ -1336,66 +1320,12 @@
                                    (arg-symbol (symbol->string (add-argument! args (syntax->datum argname)
                                                                               parsed-type))))
                                   (to-c-func-param parsed-type arg-symbol TARGET))))
-                #| (add-derivative-access-args! (lambda (argname argtype args) |#
-                #|             (let* ((parsed-type (parse-type argtype)) |#
-                #|                    (argname_ (syntax->datum argname)) |#
-                #|                    ;; NOTE: make argnames for single dx name for now as a proof of concept. |# 
-                #|                    (fake-src-pos 0) ;; NOTE: do not need src-pos for arguments. They are all distinct |#
-                #|                    (df-vs (var-symbol (symbol->string argname_) fake-src-pos)) |#
-                #|                    (dx-str (car (hash-keys parameters))) ;; FIXME implement proper dx name querry |#
-                #|                    (dfdx-argname (make-var-der-name df-vs dx-str)) |#
-                #|                    (dfdx-mappings-argname (make-var-mappings-name df-vs dx-str)) |#
-                #|                    (dfdx-inv-mappings-argname (make-dx-idxs-mappings-name df-vs dx-str)) |#
-                #|                    ;; How to pass type? Array size is unknown; Maybe pass fake value |#
-                #|                    (arg-symbol (symbol->string (add-argument! args argname_ parsed-type)))) |#
-                #|               (to-c-func-param parsed-type arg-symbol TARGET)))) |#
                 (args-list (process-args! argnames argtypes func-name args add-arg!))
-                #| (derivative-args-list |#
-                #|   ;; NOTE: for non self-sufficient function if argtype is 'real |# 
-                #|   ; then add jacobian and it's mappings the new argument list. |#
-                #|   ; This list is appended to the `args-list` and result is |#
-                #|   ; passed to the code-generator. |#
-                #|   (if self-sufficient? |#
-                #|     (list) |#
-                #|     (flatten |#
-                #|       (for/list ((dx-str (in-list (hash-keys parameters)))) |#
-                #|         (for/list ((argname (in-list (syntax-e argnames))) |#
-                #|                    (argtype (in-list (syntax->datum argtypes)))) |#
-                #|           (let* ((parsed-type (parse-type argtype)) |#
-                #|                  (base-type (type-base parsed-type))) |#
-                #|             (if (equal? base-type 'real) |#
-                #|               (let* |#
-                #|                 ((argname_ (syntax->datum argname)) |#
-                #|                  (fake-src-pos 0) ;; NOTE: do not need src-pos for arguments. They are all distinct |#
-                #|                  (df-vs (var-symbol (symbol->string argname_) fake-src-pos)) |#
-                #|                  (dfdx-argname (make-var-der-name df-vs dx-str)) |#
-                #|                  (dfdx-mappings-argname (make-var-mappings-name df-vs dx-str)) |#
-                #|                  (dfdx-inv-mappings-argname (make-dx-idxs-mappings-name df-vs dx-str)) |#
-                #|                  ;; How to pass type? Array size is unknown; Maybe pass fake value |#
-                #|                  ;; FIXME do not add argument itself. It was added in args-list |# 
-                #|                  (int-type (make-landau-type 'int #f)) |#
-                #|                  (dfdx-symbol |# 
-                #|                    (symbol->string (add-argument! args dfdx-argname dfdx-type))) |#
-                #|                  (dfdx-mappings-symbol |# 
-                #|                    (symbol->string (add-argument! args dfdx-mappings-argname dfdx-mappings-type))) |#
-                #|                  (dfdx-inv-mappings-symbol |# 
-                #|                    (symbol->string (add-argument! args dfdx-inv-mappings-argname dfdx-inv-mappings-type)))) |# 
-                #|                 (list |# 
-                #|                   (to-c-func-param dfdx-type dfdx-symbol TARGET) |#
-                #|                   (to-c-func-param int-type dfdx-len-symbol TARGET) |#
-                #|                   (to-c-func-param dfdx-mappings-type dfdx-mappings-symbol TARGET) |#
-                #|                   (to-c-func-param int-type dfdx-mappings-len-symbol TARGET) |#
-                #|                   (to-c-func-param dfdx-inv-mappings-type dfdx-inv-mappings-symbol TARGET) |#
-                #|                   (to-c-func-param int-type dfdx-inv-mappings-len-symbol TARGET))) |#
-                #|               ;; NOTE: do not need to add derivatives argument for non-real argument |#
-                #|               (list)))))))) |#
-
                 (arg-decl (c-func-arg-decl argnames args-list))
                 (ctx-clone (func-context-copy ctx)))
            (with-syntax* 
              ((ret-str (datum->syntax stx func-return-value-str))
               (name-str-stx name-str)
-              #| (name-str-derivative-stx (format "~a_derivative" name-str)) |#
               (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET))
               (arg-decl arg-decl))
 
@@ -1403,33 +1333,12 @@
                stx
                (syntax-parameterize ((func-context '#,ctx))
                                     (c-func-decl "int" name-str-stx func-ret arg-decl (thunk #,body))))
-
-             #| (if self-sufficient? |# 
-             #|   (quasisyntax/loc |#
-             #|     stx |#
-             #|     (syntax-parameterize ((func-context '#,ctx)) |#
-             #|                          (c-func-decl "int" name-str-stx func-ret arg-decl (thunk #,body)))) |#
-             #|   (quasisyntax/loc |#
-             #|     stx |#
-             #|     (string-append ;; NOTE: would be `begin` in racket backend |#
-             #|       (syntax-parameterize ((func-context '#,ctx)) |#
-             #|                            (c-func-decl "int" name-str-stx func-ret arg-decl (thunk #,body))) |#
-             #|       (syntax-parameterize ((func-context '#,ctx-clone)) |#
-             #|                            (c-func-decl "int" name-str-derivative-stx func-ret arg-decl (thunk #,body)))))) |#
              ))))))
 
-(define-syntax (_func-decl stx)
-  (syntax-parse stx
-    ((_ type name-str func-ret arg-decl body-thunk)
-     (quasisyntax/loc 
-       stx
-       (c-func-decl "int" #,#'name-str #,#'func-ret #,#'arg-decl (thunk #,#'body-thunk))))))
 
-
+;; TODO: this is a redundant function. It should be removed.
 (define-for-syntax 
   (is-self-sufficent-function? name)
-  ;; FIXME irrelevant
-  #| (displayln "FIXME: implement proper is-self-sufficent-function?") |#
   (equal? name 'main))
 
 
@@ -1811,14 +1720,10 @@
                          (raise-syntax-error #f "real value is not allowed for integer constant" stx))
                         
                         ((list 'real "<-" 'int)
-                         (match (target-lang TARGET)
-                           ('racket (if (target-extfloat? TARGET) (->extfl value) (->fl value)))
-                           ('ansi-c (->fl value))))
+                         (->rl value))
                         
                         ((list 'real "<-" 'real)
-                         (match (target-lang TARGET)
-                           ('racket (if (target-extfloat? TARGET) (real->extfl value) value))
-                           ('ansi-c value))))))
+                         (inexact->rl value)))))
                     
                     (hash-set! constants (syntax->datum #'name)
                                (constant value type #f))
@@ -1839,11 +1744,7 @@
               
        (hash-set! parameters (syntax->datum #'name)
                   (list expanded-size))
-       (match (target-lang TARGET)
-         ('racket
-          (syntax/loc stx (void)))
-         ('ansi-c
-          #'"\n"))))))
+       (datum->syntax stx (_empty-statement))))))
 
 
 (define-syntax (get-value stx)
@@ -1941,12 +1842,13 @@
                                ;; NOTE: genetated function which return derivative value
                                ; using mappings and inverse mapping to get index where derivative is stored
                                (func-name-stx (datum->syntax stx 'get_dfdx_var))
-
-                               (dx-range (check-result 
-                                           stx 
-                                           (format "bug2: get-der-variable-dx-range retured #f for ~a ~a"
-                                                   (var-symbol-.name name-vs) dx-name-str-in-current-al) 
-                                           (get-der-variable-dx-range name-vs dx-name-str-in-current-al stx)))
+                               ;; FIXME get-der-variable-dx-range is unavailable for dx dx' 
+                               (dx-range (get-der-variable-dx-range name-vs dx-name-str-in-current-al stx))
+                               #| (dx-range (check-result |# 
+                               #|             stx |# 
+                               #|             (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" |#
+                               #|                     (var-symbol-.name name-vs) dx-name-str-in-current-al) |# 
+                               #|             (get-der-variable-dx-range name-vs dx-name-str-in-current-al stx))) |#
                                (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str-in-current-al))
                                (all-derivatives-are-used? (check-if-all-derivatives-are-used
                                                             ctx
@@ -2249,10 +2151,12 @@
              (index-start-expanded_ index-start-expanded_)
              (der-vec-symb (get-der-variable-symbol name-vs dx-name-str stx))
              (der-vec-synt (datum->syntax stx #'der-vec-symb))
-             (dx-range (check-result 
-                         stx 
-                         (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" (var-symbol-.name name-vs) dx-name-str) 
-                         (get-der-variable-dx-range name-vs dx-name-str stx)))
+             ;; FIXME get-der-variable-dx-range is unavailable for dx dx' 
+             (dx-range (get-der-variable-dx-range name-vs dx-name-str stx))
+             #| (dx-range (check-result |# 
+             #|             stx |# 
+             #|             (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" (var-symbol-.name name-vs) dx-name-str) |# 
+             #|             (get-der-variable-dx-range name-vs dx-name-str stx))) |#
              (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str))
              (all-derivatives-are-used? (check-if-all-derivatives-are-used ctx
                                                                            (syntax->datum #'dx-parameter-size) 
@@ -2760,14 +2664,13 @@
                                                      ((expand-value-only #t))
                                                      value) 'expression (list)
                                                  #:reset-memo #t)))
-                                        ('racket #'(void)
-                                         #| (local-expand-memo |#
-                                         #|           #`(syntax-parameterize |#
-                                         #|               ((expand-value-only #t)) |#
-                                         #|               (begin |#
-                                         #|                 ;; FIXME inlined function's arguments are unbond |#
-                                         #|                 #,@funcs-ret-assign |#
-                                         #|                 value)) 'expression (list #'begin)) |#
+                                        ('racket (local-expand-memo
+                                                   #`(syntax-parameterize
+                                                       ((expand-value-only #t))
+                                                       (begin
+                                                         ;; FIXME inlined function's arguments are unbond
+                                                         #,@funcs-ret-assign
+                                                         value)) 'expression (list #'begin))
                                          )
                                         ))))
            (value-exp-value-part #'value-exp))
