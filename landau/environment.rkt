@@ -1,4 +1,4 @@
-#lang racket/base
+#lang racket
 
 (require 
   racket/base
@@ -745,4 +745,6 @@
 (define(make-inlined-variable-name inlined-function-name local-variable-name)
   (format INLINE-VARIABLE-FORMAT inlined-function-name local-variable-name))
 
-
+(define (variable-is-function-return? ctx symbol)
+  (define func-return-symbol (func-context-.function-return-value ctx))
+  (equal? func-return-symbol symbol))

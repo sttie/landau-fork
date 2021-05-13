@@ -1,4 +1,4 @@
-#lang racket
+#lang racket/base
 
 (require (for-syntax racket/base
                      syntax/parse
@@ -12,6 +12,8 @@
                      "combinators.rkt"
                      
                      (only-in "environment.rkt" make-landau-type))
+
+         racket/function
          "combinators.rkt"
          "type-utils.rkt"
          "runtime-defs.rkt"
@@ -162,7 +164,11 @@
                    ('racket
                     (syntax/loc stx (set! var value)))
                    ('ansi-c
-                    (quasisyntax/loc stx (c-set #,(syntax->string #'var) (to-string value))))))))
+                    (quasisyntax/loc stx (c-set #,(syntax->string #'var) (to-string value))))))
+                ((_set! var value #t)
+                 #'(_set_by_reference! var value))
+                ((_set! var value #f)
+                 #'(_set! var value))))
 
 
 ;; NOTE treat var as a pointer in case of the C backend.

@@ -17,7 +17,6 @@
               racket/serialize
               racket/list
               racket/contract
-              #| macro-debugger/stepper |#
               profile
               "environment.rkt"
               "backrun.rkt"
@@ -1326,7 +1325,7 @@
            (with-syntax* 
              ((ret-str (datum->syntax stx func-return-value-str))
               (name-str-stx name-str)
-              (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET))
+              (func-ret (to-c-func-param func-return-type (syntax->datum #'ret-str) TARGET #t))
               (arg-decl arg-decl))
 
              (quasisyntax/loc
@@ -2683,6 +2682,7 @@
              ((value-type) (syntax-property #'value-exp-typecheck-mode 'landau-type))
              ((symbol full-type src-pos) (timeit/values! TIME-TABLE 'search-left-hand-side-name 
                                                          (thunk (search-left-hand-side-name stx ctx #'name))))
+             ((variable-is-function-return) (variable-is-function-return? ctx (syntax->datum symbol)))
              ((left-hand-getter-info) (timeit! TIME-TABLE 'left-hand-getter-info
                                                (thunk (make-getter-info #'getter.index
                                                                         #'getter.slice-colon
@@ -2714,7 +2714,7 @@
                    (al-index-symb (datum->syntax stx al-index-name_))
                    (index-start-expanded_ index-start-expanded_)
                    (slice-range slice-range)
-                   )
+                   (by-reference? variable-is-function-return))
                   #| (displayln "FIXME: make sure that funcs-ret-assign should be always before set-all-derivatives-to-zero") |#
                   #| (displayln "FIXME: make sure that single function return variable is enough for sequential calls to one funcition") |#
                   (cond
@@ -2737,7 +2737,7 @@
                                               `(expr-body
                                                  (_begin ,@funcs-ret-assign)
                                                  (_begin ,@#'assertion-loops-list)
-                                                 (_set! ,#'sym ,#'dual-b-value))))))
+                                                 (_set! ,#'sym ,#'dual-b-value ,#'by-reference?))))))
                           ('real
                            (with-syntax
                              ((set-all-derivatives-to-zero
@@ -2747,7 +2747,7 @@
                                             `(expr-body
                                                (_begin ,@funcs-ret-assign)
                                                (_begin ,@#'set-all-derivatives-to-zero)
-                                               (_set! ,#'sym ,#'value-exp-value-part)))))
+                                               (_set! ,#'sym ,#'value-exp-value-part ,#'by-reference?)))))
                           ('int
                            (with-syntax
                              ((set-all-derivatives-to-zero
@@ -2757,7 +2757,7 @@
                                             `(expr-body
                                                (_begin ,@funcs-ret-assign)
                                                (_begin ,@#'set-all-derivatives-to-zero)
-                                               (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part))))))))
+                                               (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part) ,#'by-reference?)))))))
                        ;; NOTE: real variable that is not in need-only-value-set-GLOBAL is not used
                        ((equal? left-type 'real)
                         (match value-type
@@ -2770,12 +2770,12 @@
                            (datum->syntax stx
                                           `(expr-body
                                              (_begin ,@funcs-ret-assign)
-                                             (_set! ,#'sym ,#'value-exp-value-part))))
+                                             (_set! ,#'sym ,#'value-exp-value-part ,#'by-reference?))))
                           ('int
                            (datum->syntax stx
                                           `(expr-body
                                              (_begin ,@funcs-ret-assign)
-                                             (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part)))))))
+                                             (_set! ,#'sym (_exact->inexact ,#'value-exp-value-part) ,#'by-reference?))))))
                        ;; NOTE: 'int <- 'int | 'real | 'dual-b
                        (else
                          (match value-type
@@ -2783,7 +2783,7 @@
                             (datum->syntax stx
                                            `(expr-body
                                               (_begin ,@funcs-ret-assign)
-                                              (_set! ,#'sym ,#'value-exp-value-part))))
+                                              (_set! ,#'sym ,#'value-exp-value-part ,#'by-reference?))))
                            (_
                              (raise-syntax-error
                                #f (format "assignation to 'int is expected to be 'int. Given right-hand side type is ~a" value-type)
