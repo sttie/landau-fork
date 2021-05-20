@@ -20,6 +20,7 @@
          "type-utils.rkt"
          racket/contract/region
          racket/function
+         racket/match
          racket/stxparam
          racket/flonum
          racket/fixnum
