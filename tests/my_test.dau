@@ -1,0 +1,11 @@
+#lang landau
+
+const int NSAT = 4
+const real[4] arr = {1.0, 2.0, 3.0, 4.0}
+
+real[9] something_else(real GM, real[9] smth_cool)
+{
+	real T = GM * 4
+	T = T + 4142
+	something_else[0] = smth_cool[4] * GM / GM
+}

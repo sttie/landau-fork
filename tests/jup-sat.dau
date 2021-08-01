@@ -1,0 +1,285 @@
+#lang landau
+
+const int NSAT = 4
+const int NPERTURB = 4
+const int NGRAV = 7 # -, -, C20, -, C40, -, C60
+const int DIM = NSAT * 6 + NSAT * 6 * NSAT * 6
+
+const real reference_radius = 0.00047789450254521576 # reference radius of Jupiter in au (71492 km)
+
+const real pi = 3.14159265358979323846
+
+const real[2] pole_ra  = {268.056595, -0.006499}
+const real[2] pole_dec = {64.495303 , 0.002413 }
+const real[2] pm       = {284.95    , 870.536  }
+
+const real[5] nut_prec_ra =
+  {0.000117,
+   0.000938,
+   0.001432,
+   0.000030,
+   0.002150}
+
+const real[5] nut_prec_dec =
+  {0.000050,
+   0.000404,
+   0.000617,
+  -0.000013,
+   0.000926}
+
+const real[5] Jabcde_0 =
+  { 99.360714,
+   175.895369,
+   300.323162,
+   114.012305,
+   49.511251 }
+
+const real[5] Jabcde_T =
+  { 4850.4046,
+    1191.9605,
+    262.5475 ,
+    6070.2476,
+    64.3000  }
+
+
+const real au_km   = 149597870.7
+const real sec_day = 86400.0
+
+# W. M. Folkner et al.
+# Jupiter gravity field estimated from the first two Juno orbits
+# https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2017GL073140
+# converting GM to au^3/day^2 from km^3/s^2, normalizing J2, J4, J6
+const real central_gm = 126686533.0 * sec_day * sec_day / (au_km * au_km * au_km)
+const real[NGRAV] central_grav =
+  { 0.0,
+    0.0, 14696.514e-6 / -sqrt(5.0),
+    0.0,  -586.623e-6 / -sqrt(9.0),
+    0.0,    34.244e-6 / -sqrt(13.0) }
+
+parameter[NSAT * 6] initial # Initial positions and velocities of satellites
+
+
+# [celestial] = [jupiter_rotation_matrix] [local]
+real[9] jupiter_rotation_matrix (real t)
+{
+  real T = t / 36525 
+  real alpha_0 = pole_ra[0]  + pole_ra[1] * T
+  real delta_0 = pole_dec[0] + pole_dec[1] * T
+  real W = (pm[0] + pm[1] * t) * pi / 180.0
+
+  for i = [0 : 5] {
+    real J = (Jabcde_0[i] + Jabcde_T[i] * T) * pi / 180.0
+    alpha_0 += nut_prec_ra[i]  * sin(J)
+    delta_0 += nut_prec_dec[i] * cos(J)
+  }
+
+  alpha_0 *= pi / 180.0
+  delta_0 *= pi / 180.0
+  
+  # Rz(alpha + pi * 0.5) * Rx(pi * 0.5 - delta) * Rz(w)
+
+  jupiter_rotation_matrix[0] = -sin(alpha_0) * cos(W) - cos(alpha_0) * sin(delta_0) * sin(W)
+  jupiter_rotation_matrix[1] =  sin(alpha_0) * sin(W) - cos(alpha_0) * sin(delta_0) * cos(W)
+  jupiter_rotation_matrix[2] =  cos(alpha_0) * cos(delta_0)
+  jupiter_rotation_matrix[3] =  cos(alpha_0) * cos(W) - sin(alpha_0) * sin(delta_0) * sin(W)
+  jupiter_rotation_matrix[4] = -cos(alpha_0) * sin(W) - sin(alpha_0) * sin(delta_0) * cos(W)
+  jupiter_rotation_matrix[5] =  cos(delta_0) * sin(alpha_0)
+  jupiter_rotation_matrix[6] =  cos(delta_0) * sin(W)
+  jupiter_rotation_matrix[7] =  cos(delta_0) * cos(W)
+  jupiter_rotation_matrix[8] =  sin(delta_0)
+}
+
+
+real[DIM] jupsatsystem (real t, real[DIM] state_and_derivatives,
+          real[3] central_pos,
+          real[NPERTURB] perturb_gms,  real[3 * NPERTURB] perturb_pos,
+          real[NSAT] sat_gms)
+{
+  real[3 * NSAT] sat_acc
+  real[3] central_acc
+  real[DIM - NSAT * 6] state_derivatives_initial
+  real[NSAT * 6] state
+
+  state_derivatives_initial[:] = state_and_derivatives[NSAT * 6:]
+  # To allocate derivatives for state only
+  state[:] = state_and_derivatives[:NSAT * 6]
+
+  real dist2
+  real dist3
+
+  # Satellites have derivatives w.r.t. each other's initial state
+  for i = [0 : NSAT * 6]
+    for j = [0 : NSAT * 6]
+      state[i] ' initial[j] = state_derivatives_initial[i * NSAT * 6 + j]
+
+  # Central body <-> satellites
+  for i = [0 : NSAT]
+  {
+    real[3] r
+    r[0 : 3] = state[i * 6 : i * 6 + 3]
+    dist2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2]
+    dist3 = dist2 * sqrt(dist2)
+
+    sat_acc[i * 3 : i * 3 + 3] = -central_gm * r[:] / dist3
+    central_acc[:] +=  sat_gms[i] * r[:] / dist3
+  }
+
+  # Central body, satellites <- perturbing bodies
+  for i = [0 : NPERTURB]
+  {
+    real[3] r
+    r[:] = perturb_pos[i * 3 : i * 3 + 3] - central_pos[:]
+    dist2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2]
+    central_acc[:] += perturb_gms[i] * r[:] / dist2 / sqrt(dist2)
+
+    for j = [0 : NSAT]
+    {
+      r[:] = perturb_pos[i * 3 : i * 3 + 3] - (state[j * 6 : j * 6 + 3] + central_pos[:])
+      dist2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2]
+      sat_acc[j * 3 : j * 3 + 3] += perturb_gms[i] * r[:] / dist2 / sqrt(dist2)
+    }
+  }
+
+  # Satellites <-> satellites
+  for i = [1 : NSAT]
+  {
+    real[3] r
+    for j = [0 : i]
+    {
+      r[:] = state[j * 6 : j * 6 + 3] - state[i * 6 : i * 6 + 3]
+      dist2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2]
+
+      sat_acc[i * 3 : i * 3 + 3] += sat_gms[j] * r[:] / dist2 / sqrt(dist2)
+      sat_acc[j * 3 : j * 3 + 3] -= sat_gms[i] * r[:] / dist2 / sqrt(dist2)
+    }    
+  }
+
+  real[3] grav_acc_local
+  real[3] grav_acc
+  real[3] acc
+  real[9] rot
+  real[NGRAV] v_0
+  real[NGRAV] dv_0_dx
+  real[NGRAV] dv_0_dy
+  real[NGRAV] dv_0_dz
+
+  real[9] jupiter_rotation_matrix
+
+  real T = t / 36525 
+  real alpha_0 = pole_ra[0]  + pole_ra[1] * T
+  real delta_0 = pole_dec[0] + pole_dec[1] * T
+  real W = (pm[0] + pm[1] * t) * pi / 180.0
+
+  for i = [0 : 5] {
+    real J = (Jabcde_0[i] + Jabcde_T[i] * T) * pi / 180.0
+    alpha_0 += nut_prec_ra[i]  * sin(J)
+    delta_0 += nut_prec_dec[i] * cos(J)
+  }
+
+  alpha_0 *= pi / 180.0
+  delta_0 *= pi / 180.0
+  
+  # Rz(alpha + pi * 0.5) * Rx(pi * 0.5 - delta) * Rz(w)
+
+  jupiter_rotation_matrix[0] = -sin(alpha_0) * cos(W) - cos(alpha_0) * sin(delta_0) * sin(W)
+  jupiter_rotation_matrix[1] =  sin(alpha_0) * sin(W) - cos(alpha_0) * sin(delta_0) * cos(W)
+  jupiter_rotation_matrix[2] =  cos(alpha_0) * cos(delta_0)
+  jupiter_rotation_matrix[3] =  cos(alpha_0) * cos(W) - sin(alpha_0) * sin(delta_0) * sin(W)
+  jupiter_rotation_matrix[4] = -cos(alpha_0) * sin(W) - sin(alpha_0) * sin(delta_0) * cos(W)
+  jupiter_rotation_matrix[5] =  cos(delta_0) * sin(alpha_0)
+  jupiter_rotation_matrix[6] =  cos(delta_0) * sin(W)
+  jupiter_rotation_matrix[7] =  cos(delta_0) * cos(W)
+  jupiter_rotation_matrix[8] =  sin(delta_0)
+
+  rot[:] = jupiter_rotation_matrix[:]
+  
+  # Gravitational potential
+  for i = [0 : NSAT]
+  {
+    real x = state[i * 6 + 0] / reference_radius
+    real y = state[i * 6 + 1] / reference_radius
+    real z = state[i * 6 + 2] / reference_radius
+
+    real _x = rot[0] * x + rot[3] * y + rot[6] * z
+    real _y = rot[1] * x + rot[4] * y + rot[7] * z
+    real _z = rot[2] * x + rot[5] * y + rot[8] * z
+    
+    real _r2 = _x * _x + _y * _y + _z * _z
+    real _r = sqrt(_r2)
+    real _r3 = _r * _r2
+    real _r4 = _r2 * _r2
+    real _r5 = _r4 * _r
+  
+    v_0[0] = 1 / _r                 # V00 = 1 / r
+    v_0[1] = sqrt(3.0) * _z / _r3   # V10 = sqrt(3) z / r^3 
+
+    dv_0_dx[0] = -_x / _r3
+    dv_0_dy[0] = -_y / _r3
+    dv_0_dz[0] = -_z / _r3
+
+    dv_0_dx[1] = sqrt(3.0) * -3 * _z * _x / _r5
+    dv_0_dy[1] = sqrt(3.0) * -3 * _z * _y / _r5
+    dv_0_dz[1] = sqrt(3.0) * (1 / _r3 - 3 * _z * _z / _r5)
+  
+    for n = [2 : NGRAV]
+    {
+       real coef1 = sqrt((2.0 * n - 1) * (2 * n + 1) / (n * n))
+       real coef2 = sqrt((n - 1.0) * (n - 1) * (2 * n + 1) / (n * n * (2 * n - 3)))
+     
+       v_0[n] = coef1 * v_0[n - 1] * _z / _r2 - coef2 * v_0[n - 2] / _r2
+     
+       dv_0_dx[n] = coef1 * _z * (dv_0_dx[n - 1] / _r2 - v_0[n - 1] * 2 * _x / _r4) -
+                    coef2 *      (dv_0_dx[n - 2] / _r2 - v_0[n - 2] * 2 * _x / _r4)
+       dv_0_dy[n] = coef1 * _z * (dv_0_dy[n - 1] / _r2 - v_0[n - 1] * 2 * _y / _r4) -
+                    coef2 *      (dv_0_dy[n - 2] / _r2 - v_0[n - 2] * 2 * _y / _r4)
+       dv_0_dz[n] = coef1 * (dv_0_dz[n - 1] * _z / _r2 + v_0[n - 1] * (1 / _r2 - 2 * _z * _z / _r4)) -
+                    coef2 * (dv_0_dz[n - 2] / _r2 - v_0[n - 2] * 2 * _z / _r4)
+    }
+
+    real dpotential_dx = 0
+    real dpotential_dy = 0
+    real dpotential_dz = 0
+  
+    for n = [2 : NGRAV]
+    {
+       dpotential_dx += dv_0_dx[n] * central_grav[n]
+       dpotential_dy += dv_0_dy[n] * central_grav[n]
+       dpotential_dz += dv_0_dz[n] * central_grav[n]
+    }
+  
+    grav_acc_local[0] = dpotential_dx
+    grav_acc_local[1] = dpotential_dy
+    grav_acc_local[2] = dpotential_dz
+
+    for k = [0 : 3]
+      grav_acc[k] = (rot[3 * k + 0] * grav_acc_local[0] +
+                     rot[3 * k + 1] * grav_acc_local[1] +
+                     rot[3 * k + 2] * grav_acc_local[2]) / (reference_radius * reference_radius)
+
+    sat_acc[i * 3 : i * 3 + 3] += central_gm * grav_acc[:]
+    central_acc[:] = central_acc[:] - sat_gms[i] * grav_acc[:]
+  }
+
+  # Final velocities and accelerations w.r.t. central body
+  for i = [0 : NSAT]
+  {
+    acc[:] = sat_acc[i * 3 : i * 3 + 3] - central_acc[:]
+    
+    jupsatsystem[i * 6     : i * 6 + 3] = state[i * 6 + 3 : i * 6 + 6]
+    jupsatsystem[i * 6 + 3 : i * 6 + 6] = acc[:]
+
+    # Satellites have derivatives w.r.t. each other's initial state
+    for j = [0 : 3]
+    {
+      # time-derivative of derivative of i-th body position coordinate j w.r.t. 24 initial state values
+      jupsatsystem[NSAT * 6 + (i * 6 + j    ) * NSAT * 6 :
+                   NSAT * 6 + (i * 6 + j + 1) * NSAT * 6] =
+          state_and_derivatives[NSAT * 6 + (i * 6 + j + 3) * NSAT * 6 :
+                                NSAT * 6 + (i * 6 + j + 4) * NSAT * 6]
+      # time-derivative of derivative of i-th body velocity coordinate j w.r.t. 18 initial state values
+      jupsatsystem[NSAT * 6 + (i * 6 + j + 3) * NSAT * 6 :
+                   NSAT * 6 + (i * 6 + j + 4) * NSAT * 6] = 
+          acc[j] ' initial[0 : NSAT * 6]
+    }
+  }
+}

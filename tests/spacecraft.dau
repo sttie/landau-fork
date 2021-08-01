@@ -1,0 +1,37 @@
+#lang landau
+
+parameter[6] initial
+
+real[6 + 36 + 6] xdot (
+  real[6 + 36 + 6] x,
+  real GM)
+{
+  real[36] state_derivatives_initial
+  state_derivatives_initial[0 : 36] = x[6 : 6 + 36]
+
+  real[6] state_derivatives_gm
+  state_derivatives_gm[0 : 6] = x[6 + 36 : 6 + 36 + 6]
+
+  real[6] state
+  state[ : ] = x[0 : 6]
+
+  state[ : ] ' initial[ : ] = state_derivatives_initial[0 : 36]
+  state[ : ] ' GM = state_derivatives_gm[0 : 6]
+
+  real[6] state_dot
+
+  state_dot[ : 3] = state[3 : 6]
+  xdot[ : 3] = state_dot[0 : 3]
+
+  real dist2
+  real dist3inv
+
+  dist2 = sqr(state[0]) + sqr(state[1]) + sqr(state[2])
+  dist3inv = 1 / (dist2 * sqrt(dist2))
+
+  state_dot[3 : 6] = GM * (-state[0 : 3]) * dist3inv
+  xdot[3 : 6] = state_dot[3 : 6]
+
+  xdot[6 : 6 + 36] = state_dot[ : ] ' initial[ : ]
+  xdot[6 + 36 : 6 + 36 + 6] = state_dot[ : ] ' GM
+}

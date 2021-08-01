@@ -1,0 +1,17 @@
+.#*
+**/.#*
+**/#*
+**/compiled/**
+*.rkt~
+*.rkt~~
+*.dau~
+**/.DS_Store
+tests/c-code/src_generated
+*.out
+**/bin
+**/settings.json
+**/.vscode
+*.so
+*.dylib
+**/tags/**
+tags/

@@ -1,0 +1,20 @@
+#lang landau
+
+const int z = 1
+
+int f(int x) {
+  for i = [0 : 4] {
+    if (i > 2) {
+      f = 0
+    } else {
+      f = 1
+    }
+  }
+}
+
+int g(int x) {
+  g = 1
+  if (z < 0) {
+    g = 0
+  }
+}

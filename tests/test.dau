@@ -1,0 +1,52 @@
+#lang landau
+
+const int MAIN_LEN = 6
+
+parameter[2] a
+
+# real[3] f (real[3] m)
+# {
+#   f[0: 3] = m[:] 
+# }
+
+# TODO what if funcition parameter is x?
+# It does not matter because there is no parameters in inlined funcition
+# real[3] test_function(real[3] v1, real[3] v2)
+# {
+#   # FIXME how to distinguish between x as variable or an argument of out_f?
+#   # rename variable x to _x in backrun and semantics
+#   # TODO what if function is called inside another function's body?
+#   # will be local variable prepanded with __?
+#   real[3] x = v1[:]
+#   # TODO Check if real[4] x = 0.0 do not cause an error of parameter shadownig
+#   # TODO what if real[4] x = v1[0]? 
+#   # TODO use multiplication to check that derivatives arrays are paired with
+#   # proper value's arrays
+#   test_function[:] = x[:] + v2[:]
+# }
+
+# real[3] test_function_1(real[3] v1, real v2)
+# {
+#   test_function_1[:] = v1[:] + v2
+# }
+
+real[MAIN_LEN] out_f (real[3] x, real[6] dxda)
+{
+  # x[:] ' a[:] = dxda[:]
+
+  # y[:] ' a[:] = dyda[:]
+
+  # real c = 1.0e0
+  # real d = 1.0
+  # real[3] z = x 
+  # test_function(f(x), f(y))
+  # real[3] z = test_function_1(x, 1.0)
+  # real[3] h = test_function(x, y)
+
+  # for i = [0 : 1]
+  # {
+  # }
+      out_f[ : 2] = x[0] ' a[:]
+
+  # out_f[MAIN_LEN/2 :] = h[:] ' a[1]
+}
