@@ -1,6 +1,6 @@
 # Warning
 
-I am using this repository for the comfortable development only. It is not my own code, I am just trying to improve this project. Tap [here](https://gitlab.iaaras.ru/iaaras/landau/tree/master/landau) to reach the original project's repository.
+I am using this repository for the comfortable development only. It is not my own code, I am just trying to improve this project. Tap [here](https://gitlab.iaaras.ru/iaaras/landau) to reach the original project's repository.
 
 # Description
 Landau is a **lan**guage for **d**ynamical systems with **au**tomatic differentiation.
