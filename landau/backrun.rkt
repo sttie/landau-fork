@@ -309,7 +309,6 @@
             #,#'func-return-var-declaration-stx
             #,#'expanded-function-body)))))))
 
-
 (define/contract-for-syntax
   (search-name-backrun stx name)
   (-> (syntax/c any/c) (syntax/c symbol?)
