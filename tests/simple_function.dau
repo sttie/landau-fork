@@ -1,0 +1,11 @@
+#lang landau
+
+real f(real t)
+{
+  f = 1.0
+}
+
+real main()
+{
+  main = f(1.0)
+}

@@ -1,0 +1,17 @@
+#lang landau
+
+const int NSAT = 4
+const int NPERTURB = 4
+const int NGRAV = 7 # -, -, C20, -, C40, -, C60
+const int DIM = NSAT * 6 + NSAT * 6 * NSAT * 6
+
+real[9] jupiter_rotation_matrix (real t)
+{
+  jupiter_rotation_matrix[8] = sin(t)
+}
+
+real[DIM] jupsatsystem (real t)
+{
+  real[9] rot
+  rot[:] = jupiter_rotation_matrix(t)
+}
