@@ -1,4 +1,4 @@
-#lang racket/base
+#lang debug racket
 
 (require 
   (for-syntax racket/base
@@ -18,6 +18,7 @@
               racket/list
               racket/contract
               profile
+              threading 
               "environment.rkt"
               "backrun.rkt"
               "target-config.rkt"
@@ -36,7 +37,8 @@
   racket/list
   racket/function
   racket/extflonum
-  racket/fixnum)
+  racket/fixnum
+  )
 
 (provide #%module-begin
           #%datum program expr term factor primary element func constant get-value
@@ -50,9 +52,10 @@
          _rl+ _rl- _rl* _rl/ _rl-neg
          _exact->inexact
          _rl-vector _vector-ref _int-vector-ref _var-ref _vector-set! _set! _func-call 
-         _sin _cos _expt _sqr _sqrt
+         _sin _cos _expt _sqr _sqrt _tan
          _0.0 _1.0 _2.0 _0.5
          _break _nothing _empty-statement _local
+         _print-assignation
          )
 
 (define-for-syntax padding 0)
@@ -95,13 +98,26 @@
     (displayln msg)))
 
 (define/contract-for-syntax
-  (get-dx-parameter-size stx parameters dx-name)
-  (-> syntax? parameters/c string? (or/c integer? false/c))
-  (define range (get-type-range
-                  (to-landau-type stx
-                                  ;; FIXME dx-name can be not a parameter but an ordinary variable
-                                  ;; need to lookup dx set, which is constructed in backrun.rkt/process-actions-list.rkt
-                                  (list 'real (hash-ref parameters (string->symbol dx-name) 1)))))
+  (get-dx-parameter-size stx ctx parameters dx-name)
+  (-> syntax? func-context/c parameters/c string? (or/c integer? false/c))
+  (define not-found-err (lambda _
+                          (error 'internal-error
+                                 (format
+                                   "dx-name ~a not found in parameters and current-arguments tables" dx-name))))
+  (define dx-name-symbol (string->symbol dx-name))
+  (define (argument->range a)
+    (~> a
+        argument-type
+        (to-landau-type stx _)
+        (get-type-range)))
+  (define range
+    (get-type-range
+      (to-landau-type
+        stx
+        (list 'real (hash-ref parameters dx-name-symbol 
+                              (lambda _ (argument->range (hash-ref (func-context-.current-arguments ctx) dx-name-symbol
+                                                                              not-found-err))))))))
+
   (match range
     ((list n) n)
     ((list) #f)))
@@ -676,6 +692,12 @@
                                (quasisyntax/loc stx #,(rl-cos (syntax->datum #'all-atoms)))
                                (datum->syntax stx
                                               `(_cos ,@#'maybe-casted)))))
+                  ("tan"
+                   (is-type_ 'real
+                             (if (syntax->datum #'all-atoms)
+                               (quasisyntax/loc stx #,(rl-tan (syntax->datum #'all-atoms)))
+                               (datum->syntax stx
+                                              `(_tan ,@#'maybe-casted)))))
                   ("pow"
                    (is-type_ 'real
                              (if (syntax->datum #'all-atoms)
@@ -931,7 +953,17 @@
                                        #,#'applied-to-real
                                        #,(datum->syntax
                                            stx
-                                           `(_rl* (_rl-neg _1.0) (_sin ,#'dual-b-value) ,#'dual-b-derivative)))))))))
+                                           `(_rl* (_rl-neg _1.0) (_sin ,#'dual-b-value) ,#'dual-b-derivative))))))
+                        ("tan"
+                         (is-type_ 'dual-b
+                                   (quasisyntax/loc 
+                                     stx
+                                     (list
+                                       #,#'applied-to-real
+                                       #,(datum->syntax
+                                           stx
+                                           `(_rl* (_rl/ _1.0 (_sqr (_cos ,#'dual-b-value))) ,#'dual-b-derivative))))))
+                        )))
 
 
                    ((or 'real 'int)
@@ -1803,10 +1835,6 @@
                         (type-check-nonsense-der #'(format "bug: type-check-nonsense-der in runtime"))
                         (dual-bundle-nonsense
                          (syntax/loc stx (list type-check-nonsense-val type-check-nonsense-der))))
-           #| (displayln name-vs) |#
-           #| (displayln (format "(list (getter-info-type getter-info) base-type): ~a" |# 
-           #|                    (list (getter-info-type getter-info) base-type))) |# 
-           #| (displayln (syntax-parameter-value #'func-call-box)) |#
            (with-syntax ((r (with-syntax-property 'get-value-name name-symb
              (with-syntax-property 'getter-info getter-info
                (if get-name-mode-on
@@ -1848,7 +1876,7 @@
                                #|             (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" |#
                                #|                     (var-symbol-.name name-vs) dx-name-str-in-current-al) |# 
                                #|             (get-der-variable-dx-range name-vs dx-name-str-in-current-al stx))) |#
-                               (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str-in-current-al))
+                               (dx-parameter-size (get-dx-parameter-size stx ctx parameters dx-name-str-in-current-al))
                                (all-derivatives-are-used? (check-if-all-derivatives-are-used
                                                             ctx
                                                             (syntax->datum #'dx-parameter-size) 
@@ -1901,15 +1929,12 @@
                              (datum->syntax stx (get-der-variable-symbol name-vs dx-name-str-in-current-al stx #f)))
                            (dx-idxs-mappings
                              (datum->syntax stx (get-dx-idxs-mappings-variable-symbol name-vs dx-name-str-in-current-al stx #f)))
-                           (dx-mapped-size (check-result
-                                             stx
-                                             (format "bug1: get-der-variable-dx-range returned #f for ~a ~a" #'name dx-name-str-in-current-al)
-                                             (get-der-variable-dx-range name-vs 
-                                                                        dx-name-str-in-current-al stx)))
+                           (dx-mapped-size (get-der-variable-dx-range name-vs 
+                                                                        dx-name-str-in-current-al stx))
                            (inv-mapping-period (get-inv-mapping-period name-vs dx-name-str-in-current-al stx))
                            (name-string (symbol->string name-symb))
 
-                           (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str-in-current-al))
+                           (dx-parameter-size (get-dx-parameter-size stx ctx parameters dx-name-str-in-current-al))
                            (dx-name-str-in-current-al dx-name-str-in-current-al)
                            (al-index (datum->syntax stx 'al_index_name_symbol))
                            (slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -1935,10 +1960,10 @@
                                    ((syntax->datum #'all-derivatives-are-used?)
                                     (datum->syntax
                                       stx
-                                      `(_vector-ref ,#'der-vec-synt (_int+ (_int* ,#'full-idx ,#'dx-mapped-size)
+                                         `(_vector-ref ,#'der-vec-synt (_int+ (_int* ,#'full-idx ,#'dx-mapped-size)
                                                                            (_var-ref ,#'al-index)))))
-                                   (else
-                                     (with-syntax
+                                      (else
+                                        (with-syntax
                                        ((func-name-stx (datum->syntax stx 'get_dfdx_cell_dx))
                                         (args-list (list
                                                      #'full-idx
@@ -2075,7 +2100,9 @@
               `(_for ,#'loop-var 0 ,#'mapping-vec-len
                      (_let-int ,#'mapped-idx (_var-ref ,#'loop-var)
                                (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'loop-var))
-                                         (_vector-set! ,#'der-vec-synt (_var-ref ,#'mapped-idx) _0.0))))))
+                                         (_begin
+                                           (_vector-set! ,#'der-vec-synt (_var-ref ,#'mapped-idx) _0.0)
+                                           (_print-assignation ,#'der-vec-synt (_var-ref ,#'mapped-idx) _0.0)))))))
           ;; TODO: Do not use mapping if dual-l variable has have-mapping flag equal to #f
           (raise-syntax-error #f (format "bug: no mapping found for dual-l variable ~a" (var-symbol-.name name-vs)) stx)))))
   )
@@ -2116,7 +2143,9 @@
                      (_let-int ,#'mapped-idx (_var-ref ,#'loop-var)
                                (_let-int ,#'al-index-symb (_int-vector-ref ,#'mappings-synt (_var-ref ,#'loop-var))
                                          ;; NOTE: value includes references to der-vectors and al-index-symb
-                                         (_vector-set! ,#'der-vec-synt (_var-ref ,#'mapped-idx) ,#'dual-b-derivative)))))))
+                                         (_begin
+                                           (_vector-set! ,#'der-vec-synt (_var-ref ,#'mapped-idx) ,#'dual-b-derivative)
+                                           (_print-assignation ,#'der-vec-synt (_var-ref ,#'mapped-idx) ,#'dual-b-derivative))))))))
         (raise-syntax-error #f (format "bug: no mapping found for dual-l variable ~a" (var-symbol-.name name-vs)) stx)))))
 
 (define/contract-for-syntax
@@ -2156,7 +2185,7 @@
              #|             stx |# 
              #|             (format "bug2: get-der-variable-dx-range retured #f for ~a ~a" (var-symbol-.name name-vs) dx-name-str) |# 
              #|             (get-der-variable-dx-range name-vs dx-name-str stx))) |#
-             (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str))
+             (dx-parameter-size (get-dx-parameter-size stx ctx parameters dx-name-str))
              (all-derivatives-are-used? (check-if-all-derivatives-are-used ctx
                                                                            (syntax->datum #'dx-parameter-size) 
                                                                            (syntax->datum #'dx-range)
@@ -2262,7 +2291,7 @@
                                dx-name-str) 
                        (get-der-variable-dx-range name-vs dx-name-str stx)))
            (mappings-vec-len (fx* (syntax->datum #'dx-range) df-range))
-           (dx-parameter-size (get-dx-parameter-size stx parameters dx-name-str))
+           (dx-parameter-size (get-dx-parameter-size stx ctx parameters dx-name-str))
            (all-derivatives-are-used? (check-if-all-derivatives-are-used ctx
                                                                          (syntax->datum #'dx-parameter-size) 
                                                                          (syntax->datum #'dx-range)
@@ -2374,13 +2403,21 @@
                                            (_or (_int< (_var-ref ,al-index-symb) 0)
                                                 (_int>= (_var-ref ,mapped-idx) ,dx-range))
                                            (_break)
-                                           (_vector-set! ,der-vec-synt
+                                           (_begin 
+                                             (_vector-set! ,der-vec-synt
                                                          (_int+
                                                            (_int* ,dx-range
                                                                   (_int+ ,index-start-expanded_
                                                                          (_var-ref ,slice-idx)))
                                                            (_var-ref ,mapped-idx))
-                                                         ,dual-b-derivative)))))))))
+                                                         ,dual-b-derivative)
+                                             (_print-assignation ,der-vec-synt
+                                                         (_int+
+                                                           (_int* ,dx-range
+                                                                  (_int+ ,index-start-expanded_
+                                                                         (_var-ref ,slice-idx)))
+                                                           (_var-ref ,mapped-idx))
+                                                         ,dual-b-derivative))))))))))
 
 (define-for-syntax (assign-derivative-to-slice-dense stx
                                                      slice-idx
@@ -2404,13 +2441,21 @@
                            (_int* ,dx-range (_int+ ,index-start-expanded_ (_var-ref ,slice-idx))))
                          (_let-int ,al-index-symb (_int-vector-ref ,mappings-synt
                                                                      (_var-ref ,mappings-full-idx))
-                                   (_vector-set! ,der-vec-synt
+                                   (_begin (_vector-set! ,der-vec-synt
                                                  (_int+
                                                    (_int* ,dx-range
                                                           (_int+ ,index-start-expanded_
                                                                  (_var-ref ,slice-idx)))
                                                    (_var-ref ,mapped-idx))
-                                                 ,dual-b-derivative)))
+                                                 ,dual-b-derivative)
+                                           (_print-assignation ,der-vec-synt
+                                                 (_int+
+                                                   (_int* ,dx-range
+                                                          (_int+ ,index-start-expanded_
+                                                                 (_var-ref ,slice-idx)))
+                                                   (_var-ref ,mapped-idx))
+                                                 ,dual-b-derivative)
+                                           )))
                "vectorize"
                ))))
 
@@ -2437,11 +2482,17 @@
                                             (_if-stm (_or (_int< (_var-ref ,al-index-symb) 0)
                                                           (_int>= (_var-ref ,mapped-idx) ,dx-range))
                                                      (_break)
-                                                     (_vector-set!
-                                                       ,der-vec-synt
-                                                       (_int+ (_int* ,dx-range ,index-exp)
-                                                              (_var-ref ,mapped-idx))
-                                                       ,dual-b-derivative)))))
+                                                     (_begin
+                                                       (_vector-set!
+                                                         ,der-vec-synt
+                                                         (_int+ (_int* ,dx-range ,index-exp)
+                                                                (_var-ref ,mapped-idx))
+                                                         ,dual-b-derivative)
+                                                       (_print-assignation
+                                                         ,der-vec-synt
+                                                         (_int+ (_int* ,dx-range ,index-exp)
+                                                                (_var-ref ,mapped-idx))
+                                                         ,dual-b-derivative))))))
                ;; NOTE: dx-idxs-mapping al-index-symb conditions is not checked here
                ;; because in assgnation all indexses are exist
                )))
@@ -2620,7 +2671,6 @@
          ;; Typecheck mode is also needed because before the first expansion some variables are
          ; not declared. For example, inlined function variable. This will cause `name not found`
          ; syntax error if expand without typecheck-mode.
-         ;; FIXME uncomment
          (value-exp-typecheck-mode (timeit! TIME-TABLE 'typecheck-mode 
                                             (thunk (extract (local-expand-memo
                                                               #`(syntax-parameterize
@@ -2912,14 +2962,17 @@
                                 (is-slice-of-type 'dual-b value-type)
                                 (equal? value-type 'real)
                                 (is-slice-of-type 'real value-type))
-                            (datum->syntax stx ;; FIXME bug: in-range cause a parse error 
+                            (datum->syntax stx 
                                            `(_local
                                               (expr-body
                                                 (_begin ,@funcs-ret-assign)
                                                 (_for ,#'slice-idx 0 ,#'slice-range
-                                                      (_vector-set! ,#'sym
+                                                      (_begin (_vector-set! ,#'sym
                                                                     (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))
-                                                                    ,#'value-exp-value-part))))))
+                                                                    ,#'value-exp-value-part)
+                                                              (_print-assignation ,#'sym
+                                                                    (_int+ ,#'index-start-expanded_ (_var-ref ,#'slice-idx))
+                                                                    ,#'value-exp-value-part)))))))
                            ((equal? value-type 'int)
                             (datum->syntax stx
                                            `(_local
@@ -3166,8 +3219,10 @@
                            (_let-int 
                              ,#'maybe-mapped-idx (_int-vector-ref ,#'dx-idxs-mappings 0)
                             (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                     (_vector-set! ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) 
-                                                   ,#'value-exp))))))
+                                     (_begin (_vector-set! ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) 
+                                                   ,#'value-exp)
+                                             (_print-assignation ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) 
+                                                   ,#'value-exp)))))))
 
                       ((list 'var 'cell "<- der-value")
                        (datum->syntax
@@ -3180,7 +3235,8 @@
                                                         ,#'dx-idx-expanded)
                                                       -1)
                              (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                      (_vector-set! ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) ,#'value-exp))))))
+                                      (_begin (_vector-set! ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) ,#'value-exp)
+                                              (_print-assignation ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) ,#'value-exp)))))))
 
                       ((list 'var 'slice "<- der-value")
                        (datum->syntax
@@ -3195,7 +3251,8 @@
                                                        (_int+ ,#'dx-index-start-expanded (_var-ref ,#'slice_idx)))
                                       -1)
                                  (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                          (_vector-set! ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) ,#'value-exp))))))
+                                          (_begin (_vector-set! ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) ,#'value-exp)
+                                                  (_print-assignation ,#'der-vec-synt (_var-ref ,#'maybe-mapped-idx) ,#'value-exp)))))))
 
                       ((list 'cell 'var "<- der-value")
                        (datum->syntax 
@@ -3203,8 +3260,10 @@
                         ;; NOTE: Take value, not der part of bundle
                         `(_local (_let-int ,#'maybe-mapped-idx (_int-vector-ref ,#'dx-idxs-mappings ,#'df-idx-expanded)
                                            (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                                    (_vector-set! ,#'der-vec-synt
-                                                                  ,#'df-idx-expanded ,#'value-exp))))))
+                                                    (_begin (_vector-set! ,#'der-vec-synt
+                                                                  ,#'df-idx-expanded ,#'value-exp)
+                                                            (_print-assignation ,#'der-vec-synt
+                                                                  ,#'df-idx-expanded ,#'value-exp)))))))
 
                       ((list 'cell 'cell "<- der-value")
                        (datum->syntax 
@@ -3217,8 +3276,10 @@
                                                                     (_int-vector-ref ,#'dx-idxs-mappings (_int+ (_int* ,#'df-idx-expanded ,#'inv-mapping-period) ,#'dx-idx-expanded))
                                                                     -1)
                                            (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                                    (_vector-set! ,#'der-vec-synt
-                                                                  (_int+ (_int* ,#'df-idx-expanded ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp))))))
+                                                    (_begin (_vector-set! ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-idx-expanded ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)
+                                                            (_print-assignation ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-idx-expanded ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)))))))
 
                       ((list 'cell 'slice "<- der-value")
                        (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -3231,8 +3292,10 @@
                                                                     -1)
 
                                            (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                                    (_vector-set! ,#'der-vec-synt
-                                                                  (_int+ (_int* ,#'df-idx-expanded ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)))))))
+                                                    (_begin (_vector-set! ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-idx-expanded ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)
+                                                            (_print-assignation ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-idx-expanded ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp))))))))
 
                       ((list 'slice 'var "<- der-value")
                        (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -3244,8 +3307,10 @@
                                                                     (_int-vector-ref ,#'dx-idxs-mappings (_int+ (_int* ,#'df-full-idx ,#'inv-mapping-period) 0))
                                                                     -1)
                                            (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                                    (_vector-set! ,#'der-vec-synt
-                                                                  (_int+ (_int* ,#'df-full-idx ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)))))))
+                                                    (_begin (_vector-set! ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-full-idx ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)
+                                                            (_print-assignation ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-full-idx ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp))))))))
 
                       ((list 'slice 'cell "<- der-value")
                        (with-syntax* ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -3257,8 +3322,10 @@
                                                                     (_int-vector-ref ,#'dx-idxs-mappings (_int+ (_int* ,#'df-full-idx ,#'inv-mapping-period) ,#'dx-idx))
                                                                     -1)
                                            (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
-                                                    (_vector-set! ,#'der-vec-synt
-                                                                  (_int+ (_int* ,#'df-full-idx ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)))))))
+                                                    (_begin (_vector-set! ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-full-idx ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)
+                                                            (_print-assignation ,#'der-vec-synt
+                                                                  (_int+ (_int* ,#'df-full-idx ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp))))))))
 
                       ((list 'slice 'slice "<- der-value")
                        (with-syntax* ((dx-slice-idx (datum->syntax stx dx-slice-idx-name-GLOBAL))
@@ -3274,8 +3341,10 @@
                                                                           -1)
                                                  (_if-stm (_int>= (_var-ref ,#'maybe-mapped-idx) 0)
                                                           (_let-int ,#'slice-idx (_int+ (_int* (_var-ref ,#'df-slice-idx) ,#'current-dx-maped-size) (_var-ref ,#'dx-slice-idx))
-                                                                    (_vector-set! ,#'der-vec-synt
-                                                                                  (_int+ (_int* (_int+ ,#'df-index-start-expanded (_var-ref ,#'df-slice-idx)) ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp))))))))))
+                                                                    (_begin (_vector-set! ,#'der-vec-synt
+                                                                                  (_int+ (_int* (_int+ ,#'df-index-start-expanded (_var-ref ,#'df-slice-idx)) ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)
+                                                                            (_print-assignation ,#'der-vec-synt
+                                                                                  (_int+ (_int* (_int+ ,#'df-index-start-expanded (_var-ref ,#'df-slice-idx)) ,#'current-dx-maped-size) (_var-ref ,#'maybe-mapped-idx)) ,#'value-exp)))))))))))
                     )))))
            (else (datum->syntax stx (_empty-statement))))))))))
 
@@ -3384,14 +3453,16 @@
                       stx
                       `(_local (_let-int ,#'al-index-symb 0
                                          ;; NOTE: al-index-symb is used inside dual-b-derivative
-                                         (_set! ,#'var-destination-sym ,#'dual-b-derivative)))))
+                                         (_begin (_set! ,#'var-destination-sym ,#'dual-b-derivative)
+                                                 (_print-assignation ,#'var-destination-sym 0 ,#'dual-b-derivative))))))
 
                     ((list 'var "<- df-value /" 'cell)
                      (datum->syntax
                       stx
                       `(_local (_let-int ,#'al-index-symb ,#'dx-idx
                                          ;; NOTE: al-index-symb is used inside dual-b-derivative
-                                         (_set! ,#'var-destination-sym ,#'dual-b-derivative)))))
+                                         (_begin (_set! ,#'var-destination-sym ,#'dual-b-derivative)
+                                                 (_print-assignation ,#'var-destination-sym 0 ,#'dual-b-derivative))))))
 
                     ((list 'var "<- df-value /" 'slice)
                      (throw-impossible-error))
@@ -3401,14 +3472,16 @@
                       stx
                       `(_local (_let-int ,#'al-index-symb 0
                                          ;; NOTE: al-index-symb is used inside dual-b-derivative
-                                         (_vector-set! ,#'var-destination-sym ,#'func-ret-idx ,#'dual-b-derivative)))))
+                                         (_begin (_vector-set! ,#'var-destination-sym ,#'func-ret-idx ,#'dual-b-derivative)
+                                                 (_print-assignation ,#'var-destination-sym ,#'func-ret-idx ,#'dual-b-derivative))))))
 
                     ((list 'cell "<- df-value /" 'cell)
                      (datum->syntax
                       stx
                       `(_local (_let-int ,#'al-index-symb ,#'dx-idx
                                          ;; NOTE: al-index-symb is used inside dual-b-derivative
-                                         (_vector-set! ,#'var-destination-sym ,#'func-ret-idx ,#'dual-b-derivative)))))
+                                         (_begin (_vector-set! ,#'var-destination-sym ,#'func-ret-idx ,#'dual-b-derivative)
+                                                 (_print-assignation ,#'var-destination-sym ,#'func-ret-idx ,#'dual-b-derivative))))))
 
                     ((list 'cell "<- df-value /" 'slice)
                      (throw-impossible-error))
@@ -3424,7 +3497,8 @@
                            `(_for ,#'slice-idx 0 ,#'value-slice-range
                                   (_let-int ,#'al-index-symb 0
                                             (_let-int ,#'func-ret-slice-idx (_int+ (_var-ref ,#'slice-idx) ,#'func-index-start-expanded)
-                                                      (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)))))))
+                                                      (_begin (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)
+                                                              (_print-assignation ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative))))))))
                        (else
                         (with-syntax
                             ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -3434,7 +3508,8 @@
                            `(_for ,#'slice-idx 0 ,#'value-slice-range
                                   (_let-int ,#'al-index-symb 0
                                             (_let-int ,#'func-ret-slice-idx (_int+ (_var-ref ,#'slice-idx) ,#'func-index-start-expanded)
-                                                      (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)))))))))
+                                                      (_begin (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)
+                                                              (_print-assignation ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative))))))))))
 
                     ((list 'slice "<- df-value /" 'cell)
                      (cond
@@ -3447,7 +3522,8 @@
                            `(_for ,#'slice-idx 0 ,#'value-slice-range
                                   (_let-int ,#'al-index-symb ,#'dx-idx
                                             (_let-int ,#'func-ret-slice-idx (_int+ (_var-ref ,#'slice-idx) ,#'func-index-start-expanded)
-                                                      (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)))))))
+                                                      (_begin (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)
+                                                              (_print-assignation ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative))))))))
                        (else
                         (with-syntax*
                             ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -3457,7 +3533,8 @@
                            `(_for ,#'slice-idx 0 ,#'value-slice-range
                                   (_let-int ,#'al-index-symb ,#'dx-idx
                                             (_let-int ,#'func-ret-slice-idx (_int+ (_var-ref ,#'slice-idx) ,#'func-index-start-expanded)
-                                                      (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)))))))))
+                                                      (_begin (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)
+                                                              (_print-assignation ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative))))))))))
 
                     ((list 'slice "<- df-value /" 'slice)
                      (cond
@@ -3481,7 +3558,8 @@
                                   (_for ,#'dx-slice-idx 0 ,#'dx-slice-range
                                         (_let-int ,#'al-index-symb (_int+ (_var-ref ,#'dx-slice-idx) ,#'dx-index-start-expanded)
                                                   (_let-int ,#'func-ret-slice-idx (_int+ (_int* ,#'dx-period (_var-ref ,#'slice-idx)) (_var-ref ,#'dx-slice-idx) ,#'func-index-start-expanded)
-                                                            (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative))))))))
+                                                            (_begin (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)
+                                                                    (_print-assignation ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)))))))))
                        (else
                         (with-syntax*
                             ((slice-idx (datum->syntax stx slice-idx-name-GLOBAL))
@@ -3491,7 +3569,8 @@
                            `(_for ,#'slice-idx 0 ,#'value-slice-range
                                   (_let-int ,#'al-index-symb (_int+ (_var-ref ,#'slice-idx) ,#'dx-index-start-expanded)
                                             (_let-int ,#'func-ret-slice-idx (_int+ (_var-ref ,#'slice-idx) ,#'func-index-start-expanded)
-                                                      (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative))))))))))
+                                                      (_begin (_vector-set! ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)
+                                                              (_print-assignation ,#'var-destination-sym (_var-ref ,#'func-ret-slice-idx) ,#'dual-b-derivative)))))))))))
                   ))
                     
                ((equal? df-type 'real) (datum->syntax stx `(_nothing)))

@@ -11,7 +11,7 @@
    "environment.rkt")
 
 (provide rl0.0 rl* rl/ rl+ rl- rl-neg rl-sin 
-         rl-cos ->rl inexact->rl rl-sqrt 
+         rl-cos rl-tan ->rl inexact->rl rl-sqrt 
          rl-sqr rl-expt rl-vector-ref
          list->rl-vector make-rl-vector any-number?)
 
@@ -54,6 +54,11 @@
   (if (target-extfloat? TARGET)
     extflcos
     flcos))
+
+(define rl-tan
+  (if (target-extfloat? TARGET)
+    extfltan
+    fltan))
 
 (define ->rl
   (if (target-extfloat? TARGET)

@@ -1,4 +1,4 @@
-#lang racket/base
+#lang debug racket/base
 
 (require (for-syntax racket/base
                      syntax/parse
@@ -527,6 +527,19 @@
                      stx
                      (#,(if (target-extfloat? TARGET) #'c-cosl #'c-cos) (to-string val))))))))
 
+(define-syntax (_tan stx)
+  (syntax-parse stx
+                ((_tan val)
+                 (match (target-lang TARGET)
+                   ('racket
+                    (quasisyntax/loc
+                     stx
+                     (#,(if (target-extfloat? TARGET) extfltan fltan) val)))
+                   ('ansi-c
+                    (quasisyntax/loc
+                     stx
+                     (#,(if (target-extfloat? TARGET) #'c-tanl #'c-tan) (to-string val))))))))
+
 (define-syntax (_sin stx)
   (syntax-parse stx
                 ((_sin val)
@@ -636,3 +649,15 @@
             stx
             (c-func-decl #,#'c-func-pragma #,(syntax->string #'func-name) "" #,c-args (thunk (c-return #,#'body)))))))))))
 
+
+(define-syntax (_print-assignation stx)
+  (syntax-parse stx
+                ((_ arr-name idx value)
+                 (if (target-debug? TARGET) 
+                   (match (target-lang TARGET)
+                     ('racket
+                      (error '_print-assignation "Internal error. Not supported for Racket"))
+                     ('ansi-c
+                      (quasisyntax/loc stx (c-print-assignation #,(syntax->string #'arr-name) idx value))))
+                   (datum->syntax stx '(_nothing))
+                   ))))

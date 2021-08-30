@@ -1,4 +1,4 @@
-#lang racket
+#lang racket/base
 
 (require 
   racket/base
@@ -259,6 +259,7 @@
 ;; FIXME: landau-type/c with unexpanded `size` part
 ; (define type/c (list/c base-type/c any/c))
 (define type/c any/c)
+(define kind/c (one-of/c 'function 'parameter 'constant 'argument 'variable))
 (define variable/c (struct/c variable 
                              symbol?
                              type/c 
@@ -586,6 +587,7 @@
     (cons "sqr"  (list 'real))
     (cons "sin"  (list 'real))
     (cons "cos"  (list 'real))
+    (cons "tan"  (list 'real))
     (cons "pow"  (list 'real 'real)))))
 
 (define/contract (to-landau-type stx type-like-anything)
@@ -627,6 +629,14 @@
                                     type-like-anything)))
          (list base-type (list))))
 
+      ((list base-type #f)
+       (let* ((base-type (if (syntax? base-type)
+                           (syntax->datum base-type)
+                           base-type)))
+         (unless (base-type/c base-type)
+           (raise-error stx (format cant-cast-first-item 
+                                    type-like-anything)))
+         (list base-type (list))))
 
       ((list base-type (list type-range-tree))
        (let* ((type-range (if (syntax? type-range-tree) 

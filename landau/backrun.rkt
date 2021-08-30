@@ -309,11 +309,12 @@
             #,#'func-return-var-declaration-stx
             #,#'expanded-function-body)))))))
 
+
 (define/contract-for-syntax
   (search-name-backrun stx name)
   (-> (syntax/c any/c) (syntax/c symbol?)
       ;; NOTE: real constants are not propagated in backrun
-      (values (syntax/c (or/c symbol? integer? false/c)) type/c boolean? integer?))
+      (values (syntax/c (or/c symbol? integer? false/c)) type/c kind/c integer?))
   (let
     ((fake-src-pos 0)
      (is-const #t)
@@ -321,7 +322,7 @@
      (name_ (syntax->datum name))
      (func-name (syntax-parameter-value #'function-name)))
     (let-values
-      (((value type const? src-pos)
+      (((value type kind src-pos)
         (cond
           ((hash-has-key? constants name_)
            (let ((c (hash-ref constants name_)))
@@ -329,7 +330,7 @@
                (datum->syntax stx
                               (constant-value c))
                (constant-type c)
-               is-const
+               'constant
                fake-src-pos)))
           (else
             (begin
@@ -340,13 +341,15 @@
                 (cond
                   (var
                     (values (datum->syntax stx (variable-symbol var))
-                            (variable-type var) #f (variable-src-pos var)))
+                            (variable-type var)
+                            'variable
+                            (variable-src-pos var)))
                   ((equal? name_ func-name)
                    (let ((func-return-value (syntax-parameter-value #'function-return-value)))
                      (values
                        (datum->syntax stx func-return-value)
                        (syntax-parameter-value #'function-return-type)
-                       is-not-const
+                       'function
                        fake-src-pos)))
                   (else
                     (let ((arg (search-argument
@@ -356,14 +359,27 @@
                           (values
                             (datum->syntax stx (argument-symbol arg))
                             (argument-type arg)
-                            is-not-const
+                            'argument
                             fake-src-pos))
                         (else
                           (cond
-                            ((hash-has-key? parameters name_) (raise-syntax-error #f "parameters can not be used in expression" name))
+                            ((hash-has-key? parameters name_) 
+                             (let* ((par-size (hash-ref parameters name_))
+                                    (par-type (match par-size
+                                                ((list size)
+                                                 (landau-type 'real size))
+                                                ((list)
+                                                 (landau-type 'real)))))
+                               (values
+                                    (datum->syntax stx name_)
+                                    par-type
+                                    'argument
+                                    fake-src-pos))
+                             ; (raise-syntax-error #f "parameters can not be used in expression" name)
+                             )
                             (else (raise-syntax-error #f "name not found" name))))))))))))))
       ; (println (format "~a -> ~a" name value))
-      (values value type const? src-pos))
+      (values value type kind src-pos))
 
     ))
 
@@ -385,7 +401,8 @@
           ((index_) (if (attribute index) (syntax->datum #'index) #f))
           ((slice-colon_) (attribute slice-colon))
           ;; NOTE: stx-pos is provided for variables only
-          ((value full-type const? src-pos) (search-name-backrun stx #'name))
+          ((value full-type kind src-pos) (search-name-backrun stx #'name))
+          ((const?) (equal? kind 'constant))
           ((getter) (let ()
                       (define _type (expand-type-to-datum (datum->syntax stx full-type)))
                       (make-getter-info (if (attribute index) #'index #'#f)
@@ -401,6 +418,8 @@
           ((index-expanded) (if (attribute index) 
                               (local-expand-opaque #'index)
                               #f)))
+         (when (equal? kind 'parameter)
+           (raise-syntax-error #f "parameters can not be used in expression" name_))
          ;;FIXME pass getter-info as syntax property?
          #| (displayln "FIXME: check getter in get-value") |# 
          #| (displayln (format "~a get-value: name: ~a ~a" (syntax-line #'name) name-str (syntax->datum stx))) |#

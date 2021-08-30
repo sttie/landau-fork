@@ -32,10 +32,12 @@
 (define (c-not x) (format "!~a" x))
 (define (c-or x y) (format "(~a || ~a)" x y))
 (define (c-and x y) (format "(~a && ~a)" x y))
-(define (c-sin x) (format "sin(~a)" x))
 (define (c-cos x) (format "cos(~a)" x))
-(define (c-sinl x) (format "sinl(~a)" x))
 (define (c-cosl x) (format "cosl(~a)" x))
+(define (c-sin x) (format "sin(~a)" x))
+(define (c-sinl x) (format "sinl(~a)" x))
+(define (c-tan x) (format "tan(~a)" x))
+(define (c-tanl x) (format "tanl(~a)" x))
 
 (define (c-for index start end body (pragma #false))
   (let* ((indentation (offset-string (offset)))
@@ -281,3 +283,10 @@
     ""
     (string-append ", " (string-join args-list ", "))))
 
+
+(define (c-print-assignation arr-name idx value)
+  (let ((indentation (offset-string (offset)))
+        (cast-expr (if (target-extfloat? TARGET)
+                     "(long double)"
+                     "(double)")))
+    (format "~aprintf(\"~a[%d] = %.15Le\\n\", ~a, ~a~a);\n" indentation (to-string arr-name) idx cast-expr (to-string value))))

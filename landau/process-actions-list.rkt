@@ -1,24 +1,21 @@
-#lang racket
+#lang debug racket/base
 ;; TODO move the module to the syntax-analyser directory
-(require (for-syntax
-          racket/base
-          syntax/parse
-          racket/syntax
-          "environment.rkt"
-          racket/flonum
-          racket/function
-          racket/fixnum
-          racket/match
-          racket/set
-          racket/list
-          racket/contract)
-         "environment.rkt"
-         "type-utils.rkt"
-         racket/contract/region
-         racket/stxparam
-         racket/flonum
-         racket/fixnum
-         "common-for-syntax.rkt")
+(require 
+  racket/base
+  racket/contract
+  racket/contract/region
+  racket/fixnum
+  racket/flonum
+  racket/function
+  racket/list
+  racket/match
+  racket/pretty
+  racket/set
+  racket/stxparam
+
+  "environment.rkt"
+  "type-utils.rkt"
+  "common-for-syntax.rkt")
 
 (provide process! splice-nested)
 
@@ -52,17 +49,18 @@
     #f))
 
 (define (add-lval-ders-to-rval! der-table available-dx-table discard-table l-val-ref r-val-ref)
+
   (let* ((l-val-df-table (hash-ref! der-table (ref-to-key l-val-ref) (make-hash)))
          (r-val-df-table (hash-ref! der-table (ref-to-key r-val-ref) (make-hash)))
          (r-val-available-dx-table (if (hash-has-key? available-dx-table (ref-to-key r-val-ref))
-                                       (hash-ref available-dx-table (ref-to-key r-val-ref))
-                                       #f))
+                                     (hash-ref available-dx-table (ref-to-key r-val-ref))
+                                     #f))
          (r-val-discard-table
-          
-          (if (hash-has-key? discard-table (ref-to-key r-val-ref))
-              (hash-ref discard-table (ref-to-key r-val-ref))
-              #f)))
-    
+           (if (hash-has-key? discard-table (ref-to-key r-val-ref))
+             (hash-ref discard-table (ref-to-key r-val-ref))
+             #f)))
+
+
     (when r-val-available-dx-table
       (for ((l-val-dx-name (in-list (hash-keys l-val-df-table))))
         ;; NOTE: If r-val has no such dx-name then skip it
@@ -75,68 +73,68 @@
                  (l-val-maybe-dx-idxs (cadr l-val-der-bundle))
                  (l-val-dx-idx-immutable (list->set (set->list l-val-maybe-dx-idxs)))
                  (r-val-der-discard-bundle
-                  (cond
-                    ((equal? r-val-discard-table #f) #f)
-                    ((hash-has-key? r-val-discard-table l-val-dx-name)
-                     (hash-ref r-val-discard-table l-val-dx-name))
-                    (else #f))))
-            
+                   (cond
+                     ((equal? r-val-discard-table #f) #f)
+                     ((hash-has-key? r-val-discard-table l-val-dx-name)
+                      (hash-ref r-val-discard-table l-val-dx-name))
+                     (else #f))))
+
             (if (hash-has-key? r-val-df-table l-val-dx-name)
-                (let* ((r-val-der-bundle (hash-ref r-val-df-table l-val-dx-name))
-                       (r-val-der-bundle-type (car r-val-der-bundle))
-                       (dx-idxs-to-discard (if r-val-der-discard-bundle (cadr r-val-der-discard-bundle) #f))
-                       (r-val-maybe-dx-idxs (cadr r-val-der-bundle)))
-                
-                  (cond
-                    ((and (equal? l-val-der-bundle-type 'dx-idxs)
-                          (equal? r-val-der-bundle-type 'dx-idxs))
-                     ;; NOTE: if r-val already has such key, than union indexes
-                   
-                     (begin
-                       (set-union! r-val-maybe-dx-idxs
-                                   (set-intersect
-                                    (if dx-idxs-to-discard
-                                        (set-subtract
-                                         l-val-dx-idx-immutable
-                                         (list->set (set->list dx-idxs-to-discard)))
-                                        l-val-dx-idx-immutable)
-                                    r-val-available-dx-idx-immutable))
-                    
-                       (when (set-empty? r-val-maybe-dx-idxs)
-                         (hash-remove! r-val-df-table l-val-dx-name))))
-                    ((and (equal? l-val-der-bundle-type 'dx)
-                          (equal? r-val-der-bundle-type 'dx))
-                     ;; NOTE: Some code been there in 8110d17e717930726a296ba86c09873f9d1eb04f
-                     (error (format "bug: (equal? l-val-der-bundle-type 'dx-idxs) failed. dx is not an array")))))
-              
-                ;; NOTE: if r-val had no such der-bundle just copy it
-                ;; and then discard indexes if need
-                (if r-val-der-discard-bundle
-                    ;; NOTE: subtract indexes that shoud be discarded
-                    (let* ((dx-idxs-to-discard (cadr r-val-der-discard-bundle))
-                           (l-val-der-bundle-type (car l-val-der-bundle))
-                       
-                           (idxs-after-discard (set-intersect
-                                                r-val-available-dx-idx-immutable
-                                                (set-subtract
-                                                 l-val-dx-idx-immutable
-                                                 (list->set (set->list dx-idxs-to-discard))))))
-                  
-                      (unless (set-empty? idxs-after-discard)
-                        (let ((l-val-der-bundle-discarded (list l-val-der-bundle-type
-                                                                idxs-after-discard)))
-                          (hash-set! r-val-df-table l-val-dx-name l-val-der-bundle-discarded))))
-                
-                    (begin
-                      (let* ((intersected-immutable-idxs-set (set-intersect r-val-available-dx-idx-immutable
-                                                                            l-val-dx-idx-immutable))
-                             (intersected-mutable-idxs-set
-                              (for/mutable-set ((ix (in-set intersected-immutable-idxs-set)))
-                                ix)))
-                        (unless (set-empty? intersected-immutable-idxs-set)
-                          (hash-set! r-val-df-table l-val-dx-name
-                                     (list l-val-der-bundle-type
-                                           intersected-mutable-idxs-set)))))))))))))
+              (let* ((r-val-der-bundle (hash-ref r-val-df-table l-val-dx-name))
+                     (r-val-der-bundle-type (car r-val-der-bundle))
+                     (dx-idxs-to-discard (if r-val-der-discard-bundle (cadr r-val-der-discard-bundle) #f))
+                     (r-val-maybe-dx-idxs (cadr r-val-der-bundle)))
+
+                (cond
+                  ((and (equal? l-val-der-bundle-type 'dx-idxs)
+                        (equal? r-val-der-bundle-type 'dx-idxs))
+                   ;; NOTE: if r-val already has such key, than union indexes
+
+                   (begin
+                     (set-union! r-val-maybe-dx-idxs
+                                 (set-intersect
+                                   (if dx-idxs-to-discard
+                                     (set-subtract
+                                       l-val-dx-idx-immutable
+                                       (list->set (set->list dx-idxs-to-discard)))
+                                     l-val-dx-idx-immutable)
+                                   r-val-available-dx-idx-immutable))
+
+                     (when (set-empty? r-val-maybe-dx-idxs)
+                       (hash-remove! r-val-df-table l-val-dx-name))))
+                  ((and (equal? l-val-der-bundle-type 'dx)
+                        (equal? r-val-der-bundle-type 'dx))
+                   ;; NOTE: Some code been there in 8110d17e717930726a296ba86c09873f9d1eb04f
+                   (error (format "bug: (equal? l-val-der-bundle-type 'dx-idxs) failed. dx is not an array")))))
+
+              ;; NOTE: if r-val had no such der-bundle just copy it
+              ;; and then discard indexes if need
+              (if r-val-der-discard-bundle
+                ;; NOTE: subtract indexes that shoud be discarded
+                (let* ((dx-idxs-to-discard (cadr r-val-der-discard-bundle))
+                       (l-val-der-bundle-type (car l-val-der-bundle))
+
+                       (idxs-after-discard (set-intersect
+                                             r-val-available-dx-idx-immutable
+                                             (set-subtract
+                                               l-val-dx-idx-immutable
+                                               (list->set (set->list dx-idxs-to-discard))))))
+
+                  (unless (set-empty? idxs-after-discard)
+                    (let ((l-val-der-bundle-discarded (list l-val-der-bundle-type
+                                                            idxs-after-discard)))
+                      (hash-set! r-val-df-table l-val-dx-name l-val-der-bundle-discarded))))
+
+                (begin
+                  (let* ((intersected-immutable-idxs-set (set-intersect r-val-available-dx-idx-immutable
+                                                                        l-val-dx-idx-immutable))
+                         (intersected-mutable-idxs-set
+                           (for/mutable-set ((ix (in-set intersected-immutable-idxs-set)))
+                                            ix)))
+                    (unless (set-empty? intersected-immutable-idxs-set)
+                      (hash-set! r-val-df-table l-val-dx-name
+                                 (list l-val-der-bundle-type
+                                       intersected-mutable-idxs-set)))))))))))))
 
 
 ;; NOTE: Traverse actions-list in forward direction and populate available-dx-table and deps-set
@@ -311,13 +309,10 @@
                discard-table
                l-val-ref
                ref)
-             ;  (displayln (format "~a <- ~a" l-val-ref ref))
-             ;  (pretty-print der-table)
              ))))
 
       ((list 'assign l-val-ref refs-list)
        (let ((l-val-key (ref-to-key l-val-ref)))
-
          (when (set-member? deps-set l-val-key)
            (set-remove! deps-set l-val-key)
            ;; NOTE: coerce-to-list used to ignore 'int and 'int-index values in the rhs
@@ -362,17 +357,9 @@
          (available-dx-table (make-hash))
          (forward-flat (reverse rev-flat))
          (deps-set (mutable-set)))
-        #| (displayln "FIXME: check that der-table and real-vars-table are generated correctly") |#
-        #| (displayln "forward-flat:") |#
-        #| (pretty-print forward-flat) |#
         ;; NOTE: populate table with function code for the future inlining, when this function is called
-        #| (pretty-print forward-flat) |#
         (process-forward! forward-flat available-dx-table deps-set real-vars-table)
         (process-reverse! rev-flat available-dx-table deps-set der-table discard-table)
-        #| (displayln "der-table:") |# 
-        #| (pretty-print der-table) |#
-        #| (displayln "real-vars-table") |#
-        #| (pretty-print real-vars-table) |#
         (values der-table dx-names-set real-vars-table)))))
 
 

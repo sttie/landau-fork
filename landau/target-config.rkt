@@ -3,17 +3,19 @@
          racket/contract
          json)
 
-(provide target/c lang/c TARGET target-lang target-extfloat? target-c-out-path)
+(provide target/c lang/c TARGET target-lang target-extfloat? target-debug? target-c-out-path)
 
 (struct target
     (lang
      extfloat?
+     debug?
      c-out-path)
     #:prefab)
 
 (define lang/c (one-of/c 'racket 'ansi-c))
 (define target/c (struct/c target 
                            lang/c 
+                           boolean?
                            boolean?
                            path-for-some-system?))
 
@@ -72,6 +74,7 @@
 
         (target (string->symbol lang)
                 extfloat
+                #f
                 c-output-resolved-path)))
 
 (define/contract (override-with-command-line cfg-target)
@@ -86,9 +89,13 @@
                               config-target-lang))
          (final-target-extfl (if (vector-member "-extfl" args)
                                #t
-                                config-target-extfloat)))
+                                config-target-extfloat))
+         (final-target-debug? (if (vector-member "-debug" args)
+                                #t
+                                #f)))
         (target final-target-lang
                 final-target-extfl
+                final-target-debug?
                 (target-c-out-path cfg-target))))
 
 (define/contract
